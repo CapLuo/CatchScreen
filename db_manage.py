@@ -39,7 +39,12 @@ def init_db():
     
     # 创建索引
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_videos_ip ON videos(ip)')
-    
+     # ✅ 插入一条默认记录（仅在表为空时）
+    cursor.execute('''
+        INSERT INTO folders (ip, remark)
+        VALUES (?, ?)
+        ''', ('172.16.0.195', '测试文件夹'))
+
     db.commit()
     db.close()
     print("✅ 数据库初始化完成")

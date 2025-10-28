@@ -13,6 +13,7 @@ from flask_cors import CORS
 from multiprocessing import Process
 from webrtc_server import start_webrtc_server
 from functools import wraps
+from db_manage import init_db as init_db_tool
 
 # ------------- 基础配置 -------------
 app = Flask(__name__)
@@ -46,38 +47,8 @@ def close_db(e=None):
 
 
 def init_db():
-    """初始化数据库表"""
-    db = sqlite3.connect(DB_PATH)
-    cursor = db.cursor()
-    
-    # 创建文件夹表
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS folders (
-            ip TEXT PRIMARY KEY,
-            remark TEXT DEFAULT '',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # 创建视频文件表
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS videos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ip TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            file_size INTEGER,
-            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (ip) REFERENCES folders(ip) ON DELETE CASCADE
-        )
-    ''')
-    
-    # 创建索引
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_videos_ip ON videos(ip)')
-    
-    db.commit()
-    db.close()
-    print("✅ 数据库初始化完成")
+    """初始化数据库表（委托 db_manage）"""
+    init_db_tool()
 
 
 # 注册关闭回调
@@ -360,6 +331,8 @@ def frontend_index():
 
 # ---------------- 启动 ----------------
 if __name__ == "__main__":
+    from multiprocessing import freeze_support
+    freeze_support()
     # 初始化数据库
     init_db()
     
@@ -371,5 +344,6 @@ if __name__ == "__main__":
     print("✅ 数据库初始化完成")
     print("✅ 后端 API 服务启动 (port 5000)")
     print("📝 访问: http://127.0.0.1:5000/frontend/login.html")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # 重要：Windows 下禁用 reloader，避免重复启动子进程导致套接字异常
+    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
 
