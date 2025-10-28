@@ -72,6 +72,9 @@ def login_required(func):
         return func(*args, **kwargs)
     return wrapper
 
+@app.route("/.well-known/appspecific/com.chrome.devtools.json")
+def devtools_probe():
+    return ("", 204)  # 或返回 {} / 你自定义的配置
 
 # ---------------- 登录相关 API ----------------
 @app.route("/api/login", methods=["POST"])
