@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📂 视频管理端</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <style>
+    .folder-card { transition: transform .2s, box-shadow .2s; cursor: pointer; }
+    .folder-card:hover { transform: translateY(-4px); box-shadow: 0 0.75rem 1.25rem rgba(0,0,0,.08); }
+    .folder-icon { font-size: 2.75rem; color: #667eea; }
+    .skeleton { background: linear-gradient(90deg, #f2f2f2 25%, #e9ecef 37%, #f2f2f2 63%); background-size: 400% 100%; animation: shimmer 1.4s infinite; }
+    @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+  </style>
+</head>
+<body class="bg-light">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
+    <div class="container">
+      <a class="navbar-brand d-flex align-items-center gap-2" href="#">
+        <i class="bi bi-folder-symlink"></i> <span>视频管理端</span>
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navContent">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navContent">
+        <div class="ms-auto d-flex gap-2">
+          <input id="searchInput" class="form-control form-control-sm" placeholder="搜索 IP / 备注" style="width: 220px;">
+          <button class="btn btn-outline-light btn-sm" onclick="logout()">
+            <i class="bi bi-box-arrow-right"></i> 退出
+          </button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container py-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+      <h4 class="mb-0"><i class="bi bi-folder-check"></i> 视频文件夹</h4>
+      <div class="d-flex gap-2">
+        <button id="previewBtn" class="btn btn-success" disabled>
+          <i class="bi bi-broadcast"></i> 开启实时预览
+        </button>
+        <button id="refreshBtn" class="btn btn-primary" onclick="refreshFolders()">
+          <i class="bi bi-arrow-clockwise"></i> 刷新
+        </button>
+      </div>
+    </div>
+
+    <div id="foldersList" class="row g-3">
+      <!-- 骨架屏 -->
+      <div class="col-12 col-sm-6 col-lg-4 col-xl-3">
+        <div class="card p-4 skeleton" style="height: 140px; border: 0; border-radius: .75rem;"></div>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-4 col-xl-3">
+        <div class="card p-4 skeleton" style="height: 140px; border: 0; border-radius: .75rem;"></div>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-4 col-xl-3">
+        <div class="card p-4 skeleton" style="height: 140px; border: 0; border-radius: .75rem;"></div>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-4 col-xl-3">
+        <div class="card p-4 skeleton" style="height: 140px; border: 0; border-radius: .75rem;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 备注编辑模态框 -->
+  <div class="modal fade" id="remarkModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">编辑备注</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">IP</label>
+            <input id="remarkIp" type="text" class="form-control" readonly>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">备注</label>
+            <input id="remarkInput" type="text" class="form-control" placeholder="输入备注...">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="button" id="saveRemarkBtn" class="btn btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WebRTC 预览模态框 -->
+  <div class="modal fade" id="previewModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-broadcast"></i> 实时预览</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body p-0">
+          <iframe id="previewFrame" src="about:blank" style="width:100%;height:70vh;border:0;"></iframe>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1055;">
+    <div id="toast" class="toast text-bg-danger" role="alert" aria-live="assertive" aria-atomic="true">
+      <div class="d-flex">
+        <div class="toast-body" id="toastBody">错误</div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const API_BASE = 'http://127.0.0.1:5000/api';
+    const WEBRTC_BASE = 'http://127.0.0.1:8080';
+    const toast = new bootstrap.Toast(document.getElementById('toast'), { delay: 2500 });
+    const remarkModal = new bootstrap.Modal(document.getElementById('remarkModal'));
+    const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
+
+    let allFolders = [];
+    let selectedIP = null;
+
+    document.getElementById('previewBtn').addEventListener('click', () => {
+      if (!selectedIP) return;
+      const frame = document.getElementById('previewFrame');
+      frame.src = `${WEBRTC_BASE}/preview?ip=${encodeURIComponent(selectedIP)}`;
+      previewModal.show();
+    });
+
+    // 检查登录状态
+    async function checkAuth() {
+      try {
+        const response = await fetch(`${API_BASE}/check_login`, { credentials: 'include' });
+        const result = await response.json();
+        if (!result.logged_in) { window.location.href = 'login.html'; }
+      } catch (error) {
+        showError('无法验证登录状态');
+        window.location.href = 'login.html';
+      }
+    }
+
+    // 加载文件夹列表
+    async function loadFolders() {
+      setLoading(true);
+      try {
+        const response = await fetch(`${API_BASE}/folders`, { credentials: 'include' });
+        const result = await response.json();
+        allFolders = result.folders || [];
+        renderFolders(allFolders);
+      } catch (error) {
+        document.getElementById('foldersList').innerHTML = `
+          <div class="col-12">
+            <div class="alert alert-danger d-flex align-items-center" role="alert">
+              <i class="bi bi-exclamation-triangle me-2"></i>
+              <div>加载失败：${error.message}</div>
+            </div>
+          </div>`;
+        showError('加载失败');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function renderFolders(folders) {
+      const container = document.getElementById('foldersList');
+      if (!folders.length) {
+        container.innerHTML = `
+          <div class="col-12 text-center py-5">
+            <i class="bi bi-folder-x" style="font-size: 4rem; color: #ccc;"></i>
+            <p class="text-muted mt-3">暂无文件夹</p>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = folders.map(folder => `
+        <div class="col-12 col-sm-6 col-lg-4 col-xl-3">
+          <div class="folder-card card shadow-sm">
+            <div class="card-body py-3">
+              <div class="d-flex align-items-start justify-content-between">
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="folderRadio" value="${folder.ip}" ${selectedIP===folder.ip?'checked':''} />
+                </div>
+                <div class="text-end w-100">
+                  <div class="d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-2">
+                      <i class="bi bi-folder folder-icon"></i>
+                      <div class="fw-semibold">${folder.ip}</div>
+                    </div>
+                    <div>
+                      <span class="badge ${folder.online ? 'bg-success' : 'bg-secondary'}">${folder.online ? '在线' : '离线'}</span>
+                    </div>
+                  </div>
+                  <div class="text-muted small mt-1"><i class="bi bi-camera-video"></i> ${folder.video_count} 个视频</div>
+                  ${folder.last_upload_at ? `<div class="text-muted small">最近上传：${folder.last_upload_at}</div>` : ''}
+                  <div class="d-flex align-items-center gap-2 mt-2">
+                    ${folder.remark ? `<span class="text-info small">${folder.remark}</span>` : '<span class="text-muted small">无备注</span>'}
+                    <button class="btn btn-sm btn-outline-primary" onclick="openRemark('${folder.ip}', '${(folder.remark||'').replace(/'/g, "&#39;")}')">
+                      <i class="bi bi-pencil"></i> 编辑备注
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="viewFolder('${folder.ip}')">
+                      <i class="bi bi-collection-play"></i> 查看视频
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>`).join('');
+
+      // 绑定单选事件
+      container.querySelectorAll('input[name="folderRadio"]').forEach(r => {
+        r.addEventListener('change', (e) => {
+          selectedIP = e.target.value;
+          document.getElementById('previewBtn').disabled = !selectedIP;
+        });
+      });
+    }
+
+    function openRemark(ip, remark) {
+      document.getElementById('remarkIp').value = ip;
+      document.getElementById('remarkInput').value = remark === 'null' ? '' : remark;
+      remarkModal.show();
+    }
+
+    document.getElementById('saveRemarkBtn').addEventListener('click', async () => {
+      const ip = document.getElementById('remarkIp').value;
+      const remark = document.getElementById('remarkInput').value.trim();
+      try {
+        const res = await fetch(`${API_BASE}/folders/${encodeURIComponent(ip)}/remark`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remark })
+        });
+        if (!res.ok) throw new Error('保存失败');
+        remarkModal.hide();
+        refreshFolders();
+      } catch (e) {
+        showError(e.message || '保存失败');
+      }
+    });
+
+    // 过滤
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      const filtered = allFolders.filter(f => `${f.ip} ${f.remark || ''}`.toLowerCase().includes(q));
+      renderFolders(filtered);
+    });
+
+    function showError(msg) {
+      document.getElementById('toastBody').textContent = msg;
+      toast.show();
+    }
+
+    function setLoading(isLoading) {
+      const btn = document.getElementById('refreshBtn');
+      btn.disabled = isLoading;
+      btn.innerHTML = isLoading ? '<span class="spinner-border spinner-border-sm me-1"></span>加载中...' : '<i class="bi bi-arrow-clockwise"></i> 刷新';
+      if (isLoading) {
+        document.getElementById('foldersList').innerHTML = `
+          <div class="col-12 col-sm-6 col-lg-4 col-xl-3"><div class="card p-4 skeleton" style="height: 140px; border: 0; border-radius: .75rem;"></div></div>
+          <div class="col-12 col-sm-6 col-lg-4 col-xl-3"><div class="card p-4 skeleton" style="height: 140px; border: 0; border-radius: .75rem;"></div></div>
+          <div class="col-12 col-sm-6 col-lg-4 col-xl-3"><div class="card p-4 skeleton" style="height: 140px; border: 0; border-radius: .75rem;"></div></div>
+          <div class="col-12 col-sm-6 col-lg-4 col-xl-3"><div class="card p-4 skeleton" style="height: 140px; border: 0; border-radius: .75rem;"></div></div>`;
+      }
+    }
+
+    function viewFolder(ip) { window.location.href = `folder.html?ip=${encodeURIComponent(ip)}`; }
+
+    async function logout() {
+      try {
+        await fetch(`${API_BASE}/logout`, { method: 'POST', credentials: 'include' });
+        window.location.href = 'login.html';
+      } catch { window.location.href = 'login.html'; }
+    }
+
+    function refreshFolders() { loadFolders(); }
+
+    // 页面加载
+    checkAuth();
+    loadFolders();
+  </script>
+</body>
+</html>
+
