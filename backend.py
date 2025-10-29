@@ -126,18 +126,21 @@ def list_folders():
             row = cursor.fetchone()
             remark = row['remark'] if row else ""
 
-            # 最近上传时间与在线状态（40分钟内有上传视为在线）
+            # 最近上传时间（用于展示）
             last_row = db.execute(
                 'SELECT uploaded_at FROM videos WHERE ip = ? ORDER BY uploaded_at DESC LIMIT 1',
                 (folder_name,)
             ).fetchone()
             last_upload_at = last_row['uploaded_at'] if last_row else None
 
+            # 在线状态：基于 folders.updated_at（由心跳接口维护），5 分钟内视为在线
+            upd_row = db.execute('SELECT updated_at FROM folders WHERE ip = ?', (folder_name,)).fetchone()
+            updated_at = upd_row['updated_at'] if upd_row else None
             online = False
-            if last_upload_at:
+            if updated_at:
                 try:
-                    last_dt = datetime.strptime(last_upload_at, "%Y-%m-%d %H:%M:%S")
-                    online = (datetime.utcnow() - last_dt).total_seconds() <= 40 * 60
+                    upd_dt = datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S")
+                    online = (datetime.utcnow() - upd_dt).total_seconds() <= 5 * 60
                 except Exception:
                     online = False
             
@@ -209,11 +212,14 @@ def get_folder_detail(ip):
     ).fetchone()
     last_upload_at = last_row['uploaded_at'] if last_row else None
 
+    # 在线状态：基于 folders.updated_at（5 分钟内在线）
+    upd_row = db.execute('SELECT updated_at FROM folders WHERE ip = ?', (ip,)).fetchone()
+    updated_at = upd_row['updated_at'] if upd_row else None
     online = False
-    if last_upload_at:
+    if updated_at:
         try:
-            last_dt = datetime.strptime(last_upload_at, "%Y-%m-%d %H:%M:%S")
-            online = (datetime.utcnow() - last_dt).total_seconds() <= 40 * 60
+            upd_dt = datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S")
+            online = (datetime.utcnow() - upd_dt).total_seconds() <= 5 * 60
         except Exception:
             online = False
     
@@ -308,14 +314,30 @@ def upload_video(ip):
             'INSERT INTO videos (ip, filename, file_size) VALUES (?, ?, ?)',
             (ip, filename, file_size)
         )
-        # 更新 folders.updated_at
-        db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (ip,))
+        # 不在上传时更新在线状态，改由心跳接口维护
         db.commit()
     except Exception as e:
         print(f"数据库记录失败: {e}")
 
     print(f"[UPLOAD] {request.remote_addr} 上传 {filename} -> {folder}")
     return jsonify({"filename": filename, "ip": ip})
+
+
+# ---------------- 心跳/在线状态 API ----------------
+@app.route("/api/heartbeat/<ip>", methods=["POST"])
+def heartbeat(ip):
+    """心跳：仅更新 folders.updated_at，以此维护在线状态（无需登录）。
+    可在客户端周期性调用，例如每 60 秒。
+    """
+    db = get_db()
+    # 确保文件夹记录存在
+    cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
+    if not cursor.fetchone():
+        db.execute('INSERT INTO folders (ip) VALUES (?)', (ip,))
+    # 更新心跳时间
+    db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (ip,))
+    db.commit()
+    return jsonify({"msg": "ok", "ip": ip})
 
 
 # ---------------- 静态文件服务 ----------------
