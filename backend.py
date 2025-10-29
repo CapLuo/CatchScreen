@@ -30,6 +30,7 @@ ADMIN_USER = "admin"
 ADMIN_PASS = "123456"
 
 
+
 # ---------------- 数据库管理 ----------------
 def get_db():
     """获取数据库连接"""
@@ -330,6 +331,8 @@ def serve_frontend(filename):
 def frontend_index():
     """前端主页重定向到登录页"""
     return send_file(os.path.join(FRONTEND_ROOT, "login.html"))
+
+
 
 
 # ---------------- 启动 ----------------

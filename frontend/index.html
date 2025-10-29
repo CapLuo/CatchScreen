@@ -125,7 +125,7 @@
     let allFolders = [];
     let selectedIP = null;
 
-    document.getElementById('previewBtn').addEventListener('click', () => {
+    document.getElementById('previewBtn').addEventListener('click', async () => {
       if (!selectedIP) return;
       const frame = document.getElementById('previewFrame');
       frame.src = `${WEBRTC_BASE}/preview?ip=${encodeURIComponent(selectedIP)}`;
@@ -280,6 +280,12 @@
     }
 
     function refreshFolders() { loadFolders(); }
+
+    // 关闭预览时清空 iframe（webrtc_server 侧会在预览页卸载时自行释放）
+    document.getElementById('previewModal').addEventListener('hidden.bs.modal', async () => {
+      const frame = document.getElementById('previewFrame');
+      frame.src = 'about:blank';
+    });
 
     // 页面加载
     checkAuth();
