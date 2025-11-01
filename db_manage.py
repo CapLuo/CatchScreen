@@ -40,10 +40,22 @@ def init_db():
     # 创建索引
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_videos_ip ON videos(ip)')
      # ✅ 插入一条默认记录（仅在表为空时）
-    cursor.execute('''
-        INSERT INTO folders (ip, remark)
-        VALUES (?, ?)
-        ''', ('172.16.0.195', '测试文件夹'))
+    # cursor.execute('''
+    #     INSERT INTO folders (ip, remark)
+    #     VALUES (?, ?)
+    #     ''', ('172.16.0.195', '测试文件夹'))
+
+    # 迁移：为 folders 增加配置列（如不存在）
+    def ensure_column(table: str, column: str, definition: str):
+        cursor.execute(f'PRAGMA table_info({table})')
+        cols = [row[1] for row in cursor.fetchall()]
+        if column not in cols:
+            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+
+    # 是否上传录屏：0/1，默认 1（开启）
+    ensure_column('folders', 'upload_enabled', 'INTEGER DEFAULT 1')
+    # 是否直连 WebRTC：0/1，默认 0（关闭）
+    ensure_column('folders', 'webrtc_direct', 'INTEGER DEFAULT 0')
 
     db.commit()
     db.close()

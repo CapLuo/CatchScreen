@@ -121,10 +121,12 @@ def list_folders():
                 if v.lower().endswith((".mp4", ".avi", ".mov", ".webm", ".mkv"))
             ]
             
-            # 从数据库获取备注
-            cursor = db.execute('SELECT remark FROM folders WHERE ip = ?', (folder_name,))
+            # 从数据库获取备注与配置
+            cursor = db.execute('SELECT remark, upload_enabled, webrtc_direct FROM folders WHERE ip = ?', (folder_name,))
             row = cursor.fetchone()
             remark = row['remark'] if row else ""
+            upload_enabled = int(row['upload_enabled']) if row and row['upload_enabled'] is not None else 1
+            webrtc_direct = int(row['webrtc_direct']) if row and row['webrtc_direct'] is not None else 0
 
             # 最近上传时间（用于展示）
             last_row = db.execute(
@@ -149,7 +151,9 @@ def list_folders():
                 "video_count": len(videos),
                 "remark": remark,
                 "last_upload_at": last_upload_at,
-                "online": online
+                "online": online,
+                "upload_enabled": bool(upload_enabled),
+                "webrtc_direct": bool(webrtc_direct)
             })
     
     return jsonify({"folders": folders})
@@ -169,8 +173,8 @@ def create_folder():
     try:
         # 插入数据库
         db.execute(
-            'INSERT INTO folders (ip, remark) VALUES (?, ?)',
-            (ip, remark)
+            'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct) VALUES (?, ?, ?, ?)',
+            (ip, remark, 1, 0)
         )
         db.commit()
     except sqlite3.IntegrityError:
@@ -200,11 +204,13 @@ def get_folder_detail(ip):
     # 按修改时间倒序排序
     videos = sorted(videos, key=lambda v: os.path.getmtime(os.path.join(path, v)), reverse=True)
     
-    # 从数据库获取备注、最近上传与在线状态
+    # 从数据库获取备注、配置、最近上传与在线状态
     db = get_db()
-    cursor = db.execute('SELECT remark FROM folders WHERE ip = ?', (ip,))
+    cursor = db.execute('SELECT remark, upload_enabled, webrtc_direct FROM folders WHERE ip = ?', (ip,))
     row = cursor.fetchone()
     remark = row['remark'] if row else ""
+    upload_enabled = int(row['upload_enabled']) if row and row['upload_enabled'] is not None else 1
+    webrtc_direct = int(row['webrtc_direct']) if row and row['webrtc_direct'] is not None else 0
 
     last_row = db.execute(
         'SELECT uploaded_at FROM videos WHERE ip = ? ORDER BY uploaded_at DESC LIMIT 1',
@@ -228,7 +234,9 @@ def get_folder_detail(ip):
         "remark": remark,
         "videos": videos,
         "last_upload_at": last_upload_at,
-        "online": online
+        "online": online,
+        "upload_enabled": bool(upload_enabled),
+        "webrtc_direct": bool(webrtc_direct)
     })
 
 
@@ -303,11 +311,6 @@ def upload_video(ip):
     # 记录到数据库
     db = get_db()
     try:
-        # 确保文件夹记录存在
-        cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
-        if not cursor.fetchone():
-            db.execute('INSERT INTO folders (ip) VALUES (?)', (ip,))
-        
         # 记录视频文件
         file_size = os.path.getsize(save_path)
         db.execute(
@@ -324,20 +327,51 @@ def upload_video(ip):
 
 
 # ---------------- 心跳/在线状态 API ----------------
-@app.route("/api/heartbeat/<ip>", methods=["POST"])
+@app.route("/api/heartbeat/<ip>", methods=["GET"])
 def heartbeat(ip):
-    """心跳：仅更新 folders.updated_at，以此维护在线状态（无需登录）。
-    可在客户端周期性调用，例如每 60 秒。
+    """心跳：更新 folders.updated_at，并可同时上报配置（upload_enabled、webrtc_direct）。
+    无需登录。客户端可周期性调用（例如每 60 秒）。
     """
+    print(f"[HEARTBEAT] {ip} 心跳")
     db = get_db()
-    # 确保文件夹记录存在
-    cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
-    if not cursor.fetchone():
-        db.execute('INSERT INTO folders (ip) VALUES (?)', (ip,))
-    # 更新心跳时间
-    db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (ip,))
-    db.commit()
-    return jsonify({"msg": "ok", "ip": ip})
+    try:
+        # 确保文件夹记录存在
+        cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
+        if not cursor.fetchone():
+            db.execute('INSERT INTO folders (ip) VALUES (?)', (ip,))
+        
+        # 不在上传时更新在线状态，改由心跳接口维护
+        db.commit()
+    except Exception as e:
+        print(f"数据库记录失败: {e}")
+    # # 确保文件夹记录存在 todo
+    # cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
+    # if not cursor.fetchone():
+    #     db.execute('INSERT INTO folders (ip, upload_enabled, webrtc_direct) VALUES (?, ?, ?)', (ip, 1, 0))
+    # # 更新心跳时间
+    # payload = request.json or {}
+    # # 仅当提供时才更新配置
+    # if 'upload_enabled' in payload or 'webrtc_direct' in payload:
+    #     upload_enabled = payload.get('upload_enabled')
+    #     webrtc_direct = payload.get('webrtc_direct')
+    #     if upload_enabled is not None and webrtc_direct is not None:
+    #         db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP, upload_enabled = ?, webrtc_direct = ? WHERE ip = ?', (1 if upload_enabled else 0, 1 if webrtc_direct else 0, ip))
+    #     elif upload_enabled is not None:
+    #         db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP, upload_enabled = ? WHERE ip = ?', (1 if upload_enabled else 0, ip))
+    #     elif webrtc_direct is not None:
+    #         db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP, webrtc_direct = ? WHERE ip = ?', (1 if webrtc_direct else 0, ip))
+    # else:
+    #     db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (ip,))
+    # db.commit()
+    # 返回当前状态
+    row = db.execute('SELECT updated_at, upload_enabled, webrtc_direct FROM folders WHERE ip = ?', (ip,)).fetchone()
+    return jsonify({
+        "msg": "ok",
+        "ip": ip,
+        "updated_at": row['updated_at'] if row else None,
+        "upload_enabled": bool(row['upload_enabled']) if row else True,
+        "webrtc_direct": bool(row['webrtc_direct']) if row else False,
+    })
 
 
 # ---------------- 静态文件服务 ----------------
