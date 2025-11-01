@@ -374,6 +374,25 @@ def heartbeat(ip):
     })
 
 
+@app.route("/api/folders/<ip>/webrtc_direct", methods=["PATCH"])
+def update_webrtc_direct(ip):
+    """更新 WebRTC 直连状态（无需登录，供 webrtc_server 调用）"""
+    data = request.json or {}
+    webrtc_direct = data.get("webrtc_direct", False)
+    db = get_db()
+    try:
+        # 确保文件夹记录存在
+        cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
+        if not cursor.fetchone():
+            db.execute('INSERT INTO folders (ip, upload_enabled, webrtc_direct) VALUES (?, ?, ?)', (ip, 1, 0))
+        # 更新 webrtc_direct
+        db.execute('UPDATE folders SET webrtc_direct = ? WHERE ip = ?', (1 if webrtc_direct else 0, ip))
+        db.commit()
+        return jsonify({"msg": "ok", "ip": ip, "webrtc_direct": bool(webrtc_direct)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ---------------- 静态文件服务 ----------------
 @app.route("/frontend/<path:filename>")
 def serve_frontend(filename):

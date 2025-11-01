@@ -7,6 +7,7 @@ from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaRelay
 import asyncio
 import threading
+import requests
 
 app = Flask(__name__)
 CORS(app)
@@ -154,8 +155,14 @@ PREVIEW_HTML = """
     pc.ontrack = (e) => { player.srcObject = e.streams[0]; };
 
     (async () => {
-      // 通知服务端：观众进入
-      try { await fetch('/viewer/open', { method: 'POST' }); } catch {}
+      // 通知服务端：观众进入，并更新 webrtc_direct=1
+      try { 
+        await fetch('/viewer/open', { 
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip: ip })
+        }); 
+      } catch {}
       try {
         // 明确声明接收端媒体，确保 Offer 包含 video m-line
         pc.addTransceiver('video', { direction: 'recvonly' });
@@ -185,8 +192,16 @@ PREVIEW_HTML = """
       }
     })();
 
-    // 观众离开时通知服务端关闭连接
-    const release = () => { try { navigator.sendBeacon('/viewer/close'); } catch { fetch('/viewer/close', { method: 'POST', keepalive: true }); } };
+    // 观众离开时通知服务端关闭连接，并更新 webrtc_direct=0
+    const release = () => { 
+      // 使用 fetch keepalive 确保页面关闭时请求能发送
+      fetch('/viewer/close', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip: ip }),
+        keepalive: true 
+      }).catch(() => {}); 
+    };
     window.addEventListener('pagehide', release);
     window.addEventListener('beforeunload', release);
   </script>
@@ -203,6 +218,18 @@ def preview():
 def viewer_open():
     global VIEWER_ACTIVE
     VIEWER_ACTIVE = True
+    # 从请求中获取 IP，更新后端 webrtc_direct=1
+    payload = request.json or {}
+    ip = payload.get("ip")
+    if ip and ip != '-':
+        try:
+            requests.patch(
+                f"http://127.0.0.1:5000/api/folders/{ip}/webrtc_direct",
+                json={"webrtc_direct": True},
+                timeout=2
+            )
+        except Exception as e:
+            print(f"[viewer/open] 更新 webrtc_direct 失败: {e}")
     return jsonify({"viewer": True})
 
 
@@ -210,6 +237,19 @@ def viewer_open():
 def viewer_close():
     global VIEWER_ACTIVE, published
     VIEWER_ACTIVE = False
+    # 从请求中获取 IP，更新后端 webrtc_direct=0
+    payload = request.json or {}
+    ip = payload.get("ip")
+    if ip and ip != '-':
+        try:
+            requests.patch(
+                f"http://127.0.0.1:5000/api/folders/{ip}/webrtc_direct",
+                json={"webrtc_direct": False},
+                timeout=2
+            )
+        except Exception as e:
+            print(f"[viewer/close] 更新 webrtc_direct 失败: {e}")
+    # 关闭所有连接并清空发布轨
     for pc in list(pcs):
         try:
             _run_async(pc.close())
