@@ -234,15 +234,64 @@ PREVIEW_HTML = """
 const player = document.getElementById('player');
 const urlParams = new URLSearchParams(location.search);
 const ip = urlParams.get('ip') || '-';
+document.getElementById('ip').textContent = `(${ip})`;
+
+let currentPC = null;
+let releaseHandler = null;
+
+// 清理函数
+function cleanup() {
+  if (currentPC) {
+    try {
+      currentPC.close();
+    } catch (e) {
+      console.error('关闭连接失败:', e);
+    }
+    currentPC = null;
+  }
+  if (releaseHandler) {
+    window.removeEventListener('pagehide', releaseHandler);
+    window.removeEventListener('beforeunload', releaseHandler);
+    releaseHandler = null;
+  }
+  // 清空视频源
+  if (player && player.srcObject) {
+    player.srcObject.getTracks().forEach(track => track.stop());
+    player.srcObject = null;
+  }
+}
 
 // 每次尝试建立连接
 async function setupViewer(retryCount = 0) {
+  // 先清理旧连接
+  cleanup();
+  
   try {
-    const pc = new RTCPeerConnection({
+    currentPC = new RTCPeerConnection({
       iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
     });
 
-    pc.ontrack = (e) => { player.srcObject = e.streams[0]; };
+    // 设置 track 事件处理
+    currentPC.ontrack = (e) => {
+      console.log('收到媒体轨:', e.track.kind);
+      if (e.streams && e.streams[0]) {
+        player.srcObject = e.streams[0];
+        console.log('视频源已设置');
+      }
+    };
+
+    // 监听连接状态
+    currentPC.onconnectionstatechange = () => {
+      console.log('连接状态:', currentPC.connectionState);
+      if (currentPC.connectionState === 'failed' || currentPC.connectionState === 'closed') {
+        console.log('连接断开，准备重连...');
+        setTimeout(() => {
+          if (retryCount < 5) {
+            setupViewer(retryCount + 1);
+          }
+        }, 2000);
+      }
+    };
 
     // 通知服务端：观众进入
     await fetch('/viewer/open', {
@@ -252,37 +301,44 @@ async function setupViewer(retryCount = 0) {
     });
 
     // 明确声明接收端媒体
-    pc.addTransceiver('video', { direction: 'recvonly' });
+    currentPC.addTransceiver('video', { direction: 'recvonly' });
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    const offer = await currentPC.createOffer();
+    await currentPC.setLocalDescription(offer);
 
     const resp = await fetch('/view', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, timeout: 0 })
+      body: JSON.stringify({ sdp: currentPC.localDescription.sdp, type: currentPC.localDescription.type, timeout: 0 })
     });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${text}`);
+    }
 
     const answer = await resp.json();
     if (!answer.sdp) throw new Error("Server did not return SDP");
 
-    await pc.setRemoteDescription(answer);
+    await currentPC.setRemoteDescription(answer);
+    console.log('连接建立成功');
 
-    // 离开页面时关闭连接
-    const release = () => {
+    // 离开页面时关闭连接（只设置一次）
+    releaseHandler = () => {
       fetch('/viewer/close', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ip }),
         keepalive: true
       }).catch(() => {});
-      if (pc) pc.close();
+      cleanup();
     };
-    window.addEventListener('pagehide', release);
-    window.addEventListener('beforeunload', release);
+    window.addEventListener('pagehide', releaseHandler);
+    window.addEventListener('beforeunload', releaseHandler);
 
   } catch (err) {
     console.error('viewer setup failed:', err);
+    cleanup();
     if (retryCount < 5) {
       // 自动重试
       setTimeout(() => setupViewer(retryCount + 1), 2000);
@@ -331,7 +387,7 @@ def viewer_close():
     remote_addr = request.remote_addr
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [INFO] [VIEWER_CLOSE] IP={ip} Remote={remote_addr} | 开始关闭所有连接")
+    print(f"[{timestamp}] [INFO] [VIEWER_CLOSE] IP={ip} Remote={remote_addr} | 开始关闭观众连接")
     
     VIEWER_ACTIVE = False
     
@@ -347,9 +403,8 @@ def viewer_close():
         except Exception as e:
             print(f"[{timestamp}] [ERROR] [VIEWER_CLOSE] IP={ip} | 更新 webrtc_direct 失败: {e}")
     
-    # 关闭所有连接并清空发布轨
+    # 只关闭观众连接，保留发布者连接和发布轨
     closed_count = 0
-    publisher_count = 0
     viewer_count = 0
     
     for pc in list(pcs):
@@ -357,32 +412,26 @@ def viewer_close():
         info = pc_info.get(pc_id, {})
         conn_type = info.get("type", "unknown")
         
-        if conn_type == "publisher":
-            publisher_count += 1
-        elif conn_type == "viewer":
+        # 只关闭观众连接
+        if conn_type == "viewer":
             viewer_count += 1
-        
-        try:
-            current_state = pc.connectionState if hasattr(pc, 'connectionState') else "unknown"
-            _log_connection("INFO", pc_id, f"主动关闭连接 | 当前状态: {current_state}")
-            _run_async(pc.close())
-            closed_count += 1
-        except Exception as e:
-            _log_connection("ERROR", pc_id, f"关闭连接时出错: {e}")
-        finally:
-            pcs.discard(pc)
-            pc_info.pop(pc_id, None)
-    
-    # 记录发布轨状态
-    had_video = published["video"] is not None
-    had_audio = published["audio"] is not None
-    
-    published = {"video": None, "audio": None}
+            try:
+                current_state = pc.connectionState if hasattr(pc, 'connectionState') else "unknown"
+                _log_connection("INFO", pc_id, f"主动关闭观众连接 | 当前状态: {current_state}")
+                _run_async(pc.close())
+                closed_count += 1
+            except Exception as e:
+                _log_connection("ERROR", pc_id, f"关闭连接时出错: {e}")
+            finally:
+                pcs.discard(pc)
+                pc_info.pop(pc_id, None)
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    publisher_count = len([p for p in pcs if pc_info.get(str(id(p)), {}).get("type") == "publisher"])
     print(f"[{timestamp}] [INFO] [VIEWER_CLOSE] IP={ip} | 关闭完成:")
-    print(f"  - 关闭连接数: {closed_count} (发布者: {publisher_count}, 观众: {viewer_count})")
-    print(f"  - 发布轨清理: video={'已清空' if had_video else '无'}, audio={'已清空' if had_audio else '无'}")
+    print(f"  - 关闭观众连接数: {closed_count}")
+    print(f"  - 保留发布者连接数: {publisher_count}")
+    print(f"  - 发布轨状态: video={'有' if published['video'] else '无'}, audio={'有' if published['audio'] else '无'}")
     print(f"  - 剩余连接数: {len(pcs)}")
     
     return jsonify({"viewer": False, "closed": closed_count})
