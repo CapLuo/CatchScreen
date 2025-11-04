@@ -438,8 +438,8 @@ def viewer_close():
 
 def start_webrtc_server():
     """启动 WebRTC 服务器"""
-    print("🚀 启动 WebRTC 服务器 (port 8080)")
-    app.run(host="0.0.0.0", port=8080, debug=False)
+    print("🚀 启动 WebRTC 服务器 (port 5002)")
+    app.run(host="0.0.0.0", port=5002, debug=False)
 
 if __name__ == "__main__":
     start_webrtc_server()

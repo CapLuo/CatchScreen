@@ -423,8 +423,8 @@ if __name__ == "__main__":
     
     print("✅ WebRTC 服务已启动 (port 8080)")
     print("✅ 数据库初始化完成")
-    print("✅ 后端 API 服务启动 (port 5000)")
-    print("📝 访问: http://127.0.0.1:5000/frontend/login.html")
+    print("✅ 后端 API 服务启动 (port 5001)")
+    print("📝 访问: http://127.0.0.1:5001/frontend/login.html")
     # 重要：Windows 下禁用 reloader，避免重复启动子进程导致套接字异常
-    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
+    app.run(host="0.0.0.0", port=5001, debug=True, use_reloader=False)
 
