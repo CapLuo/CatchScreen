@@ -337,8 +337,11 @@ def heartbeat(ip):
     try:
         # 确保文件夹记录存在
         cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
-        if not cursor.fetchone():
-            db.execute('INSERT INTO folders (ip) VALUES (?)', (ip,))
+        if cursor.fetchone() is not None:
+            db.execute(
+                'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct) VALUES (?, ?, ?, ?)',
+                (ip, "", 1, 0)
+            )
         
         # 不在上传时更新在线状态，改由心跳接口维护
         db.commit()
