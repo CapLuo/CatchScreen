@@ -34,3 +34,5 @@ desktop.ini
 # 日志文件
 *.log
 
+#虚拟机
+myenv/
