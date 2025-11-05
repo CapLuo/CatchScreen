@@ -1,4 +1,15 @@
+# Flask 后端框架
 flask>=2.3.0
 flask-cors>=4.0.0
 werkzeug>=2.3.0
 
+# WebRTC 服务
+aiortc>=1.6.0
+
+# HTTP 客户端（用于 webrtc_server 调用后端 API）
+requests>=2.31.0
+
+# 可选：屏幕抓取客户端依赖（如果使用 screen_publisher.py）
+# mss>=9.0.1
+# numpy>=1.24.0
+# av>=10.0.0
