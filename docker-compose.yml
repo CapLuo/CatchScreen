@@ -1,0 +1,17 @@
+version: "3.9"
+services:
+  catchscreen:
+    build: .
+    container_name: catchscreen
+    restart: unless-stopped
+    ports:
+      - "5001:5001"   # backend Flask
+      - "5002:5002"   # webrtc_server
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./uploads:/app/uploads
+      - ./database.db:/app/database.db
+      - ./frontend:/app/frontend
+    command: ["python", "backend.py"]
+

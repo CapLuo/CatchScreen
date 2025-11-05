@@ -38,9 +38,9 @@ pip install -r requirements.txt
 python backend.py
 ```
 
-后端服务将在 `http://127.0.0.1:5000` 启动，提供 REST API 接口。
+后端服务将在 `http://127.0.0.1:5001` 启动，提供 REST API 接口。
 
-同时会自动启动 WebRTC 服务（端口 8080）用于直播点看功能。
+同时会自动启动 WebRTC 服务（端口 5002）用于直播点看功能。
 
 #### 3. 访问前端
 
@@ -105,6 +105,47 @@ Screen/
 - ✅ 响应式设计，支持移动端
 
 ## 🗄️ 数据库管理
+## 🐳 Docker 部署
+
+### 使用 Docker Compose（推荐）
+
+1) 构建并启动
+
+```bash
+docker compose up -d --build
+```
+
+2) 访问
+
+- 后端接口与前端页面: http://127.0.0.1:5001/frontend/login.html
+- WebRTC 预览页: http://127.0.0.1:5002/preview?ip=YOUR_IP
+
+3) 数据持久化
+
+- 上传目录挂载到宿主机 `./uploads`
+- SQLite 数据库使用宿主机 `./database.db`
+
+4) 停止/查看日志
+
+```bash
+docker compose logs -f
+docker compose down
+```
+
+### 直接使用 Docker
+
+```bash
+docker build -t catchscreen:latest .
+docker run -d --name catchscreen \
+  -p 5000:5000 -p 5002:5002 \
+  -v $PWD/uploads:/app/uploads \
+  -v $PWD/database.db:/app/database.db \
+  -v $PWD/frontend:/app/frontend \
+  catchscreen:latest
+```
+
+> 注意：`webrtc_server.py` 端口为 5002，如需自定义端口请同步修改 `docker-compose.yml` 的端口映射。
+
 
 ### 管理工具
 

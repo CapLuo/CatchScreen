@@ -421,7 +421,7 @@ if __name__ == "__main__":
     p = Process(target=start_webrtc_server, daemon=True)
     p.start()
     
-    print("✅ WebRTC 服务已启动 (port 8080)")
+    print("✅ WebRTC 服务已启动 (port 5002)")
     print("✅ 数据库初始化完成")
     print("✅ 后端 API 服务启动 (port 5001)")
     print("📝 访问: http://127.0.0.1:5001/frontend/login.html")
