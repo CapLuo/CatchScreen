@@ -109,53 +109,60 @@ def check_login():
 @app.route("/api/folders", methods=["GET"])
 @login_required
 def list_folders():
-    """获取所有文件夹列表"""
+    """获取所有文件夹列表（以数据库 folders 为准，再补充文件与状态信息）"""
     db = get_db()
     folders = []
-    
-    for folder_name in sorted(os.listdir(UPLOAD_ROOT)):
-        folder_path_ = os.path.join(UPLOAD_ROOT, folder_name)
-        if os.path.isdir(folder_path_):
-            videos = [
-                v for v in os.listdir(folder_path_)
-                if v.lower().endswith((".mp4", ".avi", ".mov", ".webm", ".mkv"))
-            ]
-            
-            # 从数据库获取备注与配置
-            cursor = db.execute('SELECT remark, upload_enabled, webrtc_direct FROM folders WHERE ip = ?', (folder_name,))
-            row = cursor.fetchone()
-            remark = row['remark'] if row else ""
-            upload_enabled = int(row['upload_enabled']) if row and row['upload_enabled'] is not None else 1
-            webrtc_direct = int(row['webrtc_direct']) if row and row['webrtc_direct'] is not None else 0
 
-            # 最近上传时间（用于展示）
-            last_row = db.execute(
-                'SELECT uploaded_at FROM videos WHERE ip = ? ORDER BY uploaded_at DESC LIMIT 1',
-                (folder_name,)
-            ).fetchone()
-            last_upload_at = last_row['uploaded_at'] if last_row else None
+    # 1) 先从数据库读取所有 folders 记录
+    rows = db.execute('SELECT ip, remark, updated_at, upload_enabled, webrtc_direct FROM folders ORDER BY ip').fetchall()
 
-            # 在线状态：基于 folders.updated_at（由心跳接口维护），5 分钟内视为在线
-            upd_row = db.execute('SELECT updated_at FROM folders WHERE ip = ?', (folder_name,)).fetchone()
-            updated_at = upd_row['updated_at'] if upd_row else None
-            online = False
-            if updated_at:
-                try:
-                    upd_dt = datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S")
-                    online = (datetime.utcnow() - upd_dt).total_seconds() <= 5 * 60
-                except Exception:
-                    online = False
-            
-            folders.append({
-                "ip": folder_name,
-                "video_count": len(videos),
-                "remark": remark,
-                "last_upload_at": last_upload_at,
-                "online": online,
-                "upload_enabled": bool(upload_enabled),
-                "webrtc_direct": bool(webrtc_direct)
-            })
-    
+    # 2) 逐条补充视频与在线信息
+    for row in rows:
+        ip = row['ip']
+        remark = row['remark'] or ""
+        updated_at = row['updated_at']
+        upload_enabled = int(row['upload_enabled']) if row['upload_enabled'] is not None else 1
+        webrtc_direct = int(row['webrtc_direct']) if row['webrtc_direct'] is not None else 0
+
+        # 确保物理目录存在
+        path = folder_path(ip)
+        # 统计视频数量
+        video_count = 0
+        if os.path.isdir(path):
+            try:
+                video_count = len([
+                    v for v in os.listdir(path)
+                    if v.lower().endswith((".mp4", ".avi", ".mov", ".webm", ".mkv"))
+                ])
+            except Exception:
+                video_count = 0
+
+        # 最近上传时间
+        last_row = db.execute(
+            'SELECT uploaded_at FROM videos WHERE ip = ? ORDER BY uploaded_at DESC LIMIT 1',
+            (ip,)
+        ).fetchone()
+        last_upload_at = last_row['uploaded_at'] if last_row else None
+
+        # 在线状态：基于 folders.updated_at（5 分钟内在线）
+        online = False
+        if updated_at:
+            try:
+                upd_dt = datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S")
+                online = (datetime.utcnow() - upd_dt).total_seconds() <= 5 * 60
+            except Exception:
+                online = False
+
+        folders.append({
+            "ip": ip,
+            "video_count": video_count,
+            "remark": remark,
+            "last_upload_at": last_upload_at,
+            "online": online,
+            "upload_enabled": bool(upload_enabled),
+            "webrtc_direct": bool(webrtc_direct)
+        })
+
     return jsonify({"folders": folders})
 
 
