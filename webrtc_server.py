@@ -10,9 +10,11 @@ import threading
 import requests
 import time
 from datetime import datetime
+import os
 
 app = Flask(__name__)
 CORS(app)
+BACKEND_BASE = os.environ.get('BACKEND_BASE', 'http://127.0.0.1:5001')
 
 # 全局：发布者轨道中继与连接集合
 relay = MediaRelay()
@@ -370,7 +372,7 @@ def viewer_open():
     if ip and ip != '-':
         try:
             requests.patch(
-                f"http://127.0.0.1:5000/api/folders/{ip}/webrtc_direct",
+                f"{BACKEND_BASE}/api/folders/{ip}/webrtc_direct",
                 json={"webrtc_direct": True},
                 timeout=2
             )
@@ -395,7 +397,7 @@ def viewer_close():
     if ip and ip != '-' and ip != 'N/A':
         try:
             requests.patch(
-                f"http://127.0.0.1:5000/api/folders/{ip}/webrtc_direct",
+                f"{BACKEND_BASE}/api/folders/{ip}/webrtc_direct",
                 json={"webrtc_direct": False},
                 timeout=2
             )
