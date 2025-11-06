@@ -336,7 +336,7 @@ def upload_video(ip):
 # ---------------- 心跳/在线状态 API ----------------
 @app.route("/api/heartbeat/<ip>", methods=["GET"])
 def heartbeat(ip):
-    """心跳：更新 folders.updated_at，并可同时上报配置（upload_enabled、webrtc_direct）。
+    """心跳：更新 folders.updated_at 和 last_upload_at（更新 videos 表中该 IP 的最后一条记录）。
     无需登录。客户端可周期性调用（例如每 60 秒）。
     """
     print(f"[HEARTBEAT] {ip} 心跳")
@@ -344,35 +344,32 @@ def heartbeat(ip):
     try:
         # 确保文件夹记录存在
         cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
-        if cursor.fetchone() is not None:
+        if cursor.fetchone() is None:
             db.execute(
                 'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct) VALUES (?, ?, ?, ?)',
                 (ip, "", 1, 0)
             )
         
-        # 不在上传时更新在线状态，改由心跳接口维护
+        # 更新 folders.updated_at（用于在线状态判断）
+        db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (ip,))
+        
+        # 更新 last_upload_at：更新 videos 表中该 IP 的最后一条记录的 uploaded_at
+        last_video = db.execute(
+            'SELECT id FROM videos WHERE ip = ? ORDER BY uploaded_at DESC LIMIT 1',
+            (ip,)
+        ).fetchone()
+        
+        if last_video:
+            # 如果存在视频记录，更新最后一条的 uploaded_at（用于显示最后活动时间）
+            db.execute(
+                'UPDATE videos SET uploaded_at = CURRENT_TIMESTAMP WHERE id = ?',
+                (last_video['id'],)
+            )
+        
         db.commit()
     except Exception as e:
         print(f"数据库记录失败: {e}")
-    # # 确保文件夹记录存在 todo
-    # cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
-    # if not cursor.fetchone():
-    #     db.execute('INSERT INTO folders (ip, upload_enabled, webrtc_direct) VALUES (?, ?, ?)', (ip, 1, 0))
-    # # 更新心跳时间
-    # payload = request.json or {}
-    # # 仅当提供时才更新配置
-    # if 'upload_enabled' in payload or 'webrtc_direct' in payload:
-    #     upload_enabled = payload.get('upload_enabled')
-    #     webrtc_direct = payload.get('webrtc_direct')
-    #     if upload_enabled is not None and webrtc_direct is not None:
-    #         db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP, upload_enabled = ?, webrtc_direct = ? WHERE ip = ?', (1 if upload_enabled else 0, 1 if webrtc_direct else 0, ip))
-    #     elif upload_enabled is not None:
-    #         db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP, upload_enabled = ? WHERE ip = ?', (1 if upload_enabled else 0, ip))
-    #     elif webrtc_direct is not None:
-    #         db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP, webrtc_direct = ? WHERE ip = ?', (1 if webrtc_direct else 0, ip))
-    # else:
-    #     db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (ip,))
-    # db.commit()
+    
     # 返回当前状态
     row = db.execute('SELECT updated_at, upload_enabled, webrtc_direct FROM folders WHERE ip = ?', (ip,)).fetchone()
     return jsonify({
