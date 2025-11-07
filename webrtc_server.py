@@ -1,56 +1,34 @@
 """
-WebRTC 服务器 - 用于视频直播点看功能
+WebRTC 推流服务器
+-----------------
+使用 aiohttp 提供 WebRTC 推流服务，支持多客户端连接和网页预览
 """
-from flask import Flask, request, jsonify, render_template_string
-from flask_cors import CORS
-from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaRelay
 import asyncio
-import threading
-import requests
+import json
 import time
 from datetime import datetime
+from typing import Dict, Set, Optional, Tuple, Any
 import os
 
-app = Flask(__name__)
-CORS(app)
+from aiohttp import web
+from aiohttp.web import Request, Response
+from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc.contrib.media import MediaRelay
+import requests
+
+# 配置
 BACKEND_BASE = os.environ.get('BACKEND_BASE', 'http://127.0.0.1:5001')
+SERVER_PORT = int(os.environ.get('WEBRTC_PORT', '5002'))
 
-# 全局：发布者轨道中继与连接集合
-relay = MediaRelay()
-pcs = set()
-pc_info = {}  # {pc_id: {"type": "publisher/viewer", "ip": "...", "created_at": timestamp, "remote_addr": "..."}}
-published = {"video": None, "audio": None}
-VIEWER_ACTIVE = False
-
-# 全局常驻事件循环（在线程中运行），承载所有 aiortc 会话
-_loop = asyncio.new_event_loop()
-
-def _loop_runner(loop: asyncio.AbstractEventLoop):
-    asyncio.set_event_loop(loop)
-    loop.run_forever()
-
-_loop_thread = threading.Thread(target=_loop_runner, args=(_loop,), daemon=True)
-_loop_thread.start()
+# 全局状态
+relay: MediaRelay = MediaRelay()
+pcs: Set[RTCPeerConnection] = set()
+pc_info: Dict[str, Dict] = {}  # {pc_id: {"type": str, "ip": str, "created_at": float, "remote_addr": str}}
+published: Dict[str, Optional[Any]] = {"video": None, "audio": None}
+VIEWER_ACTIVE: bool = False
 
 
-@app.errorhandler(Exception)
-def handle_exception(err):
-    """统一错误为 JSON，便于前端处理。仅针对 webrtc 相关路径。"""
-    path = request.path or ""
-    if path in ("/webrtc", "/view", "/viewer/open", "/viewer/close"):
-        status = getattr(err, 'code', 500)
-        return jsonify({"error": str(err)}), status
-    # 其它路径保持默认（HTML）
-    raise err
-
-def _run_async(coro):
-    """在线程常驻事件循环上同步执行协程，返回结果。"""
-    fut = asyncio.run_coroutine_threadsafe(coro, _loop)
-    return fut.result()
-
-
-def _log_connection(level, pc_id, msg, **kwargs):
+def _log_connection(level: str, pc_id: str, msg: str, **kwargs) -> None:
     """记录连接相关日志"""
     info = pc_info.get(pc_id, {})
     conn_type = info.get("type", "unknown")
@@ -61,7 +39,7 @@ def _log_connection(level, pc_id, msg, **kwargs):
     print(f"[{timestamp}] [{level}] [WebRTC-{conn_type.upper()}] PC#{pc_id[:8]} IP={ip} Remote={remote} | {msg} {extra}".strip())
 
 
-def _setup_pc_logging(pc, pc_id, conn_type, ip=None, remote_addr=None):
+def _setup_pc_logging(pc: RTCPeerConnection, pc_id: str, conn_type: str, ip: Optional[str] = None, remote_addr: Optional[str] = None) -> None:
     """为 PeerConnection 设置状态监听和日志"""
     pc_info[pc_id] = {
         "type": conn_type,
@@ -75,11 +53,22 @@ def _setup_pc_logging(pc, pc_id, conn_type, ip=None, remote_addr=None):
         state = pc.connectionState
         _log_connection("INFO", pc_id, f"连接状态变化: {state}")
         
-        if state == "closed":
+        if state == "closed" or state == "failed" or state == "disconnected":
+            # 清理连接
             info = pc_info.pop(pc_id, {})
+            pcs.discard(pc)
             duration = time.time() - info.get("created_at", time.time())
-            _log_connection("INFO", pc_id, f"连接已关闭 | 持续时间: {duration:.2f}秒", 
-                          duration=f"{duration:.2f}s")
+            conn_type = info.get("type", "unknown")
+            _log_connection("INFO", pc_id, f"连接已关闭 ({state}) | 持续时间: {duration:.2f}秒", duration=f"{duration:.2f}s")
+            
+            # 如果是发布者连接关闭，清理发布轨 todo
+            if conn_type == "publisher":
+                if published["video"] is not None:
+                    _log_connection("INFO", pc_id, "清理发布者视频轨")
+                    published["video"] = None
+                if published["audio"] is not None:
+                    _log_connection("INFO", pc_id, "清理发布者音频轨")
+                    published["audio"] = None
     
     @pc.on("iceconnectionstatechange")
     def on_ice_state_change():
@@ -92,96 +81,134 @@ def _setup_pc_logging(pc, pc_id, conn_type, ip=None, remote_addr=None):
         _log_connection("DEBUG", pc_id, f"信令状态: {state}")
 
 
-@app.route("/webrtc", methods=["POST"])
-def webrtc_publish():
-    """发布接口：客户端（屏幕抓取端）发送 Offer，服务器保存上行轨并返回 Answer"""
-    payload = request.json or {}
-    offer_sdp = payload.get("sdp")
-    offer_type = payload.get("type", "offer")
-    if not offer_sdp:
-        return jsonify({"error": "missing sdp"}), 400
-
-    pc = RTCPeerConnection()
-    pc_id = id(pc)
-    remote_addr = request.remote_addr
-    
-    # 从 SDP 或请求中提取 IP（可选）
-    ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or remote_addr
-    
-    _setup_pc_logging(pc, str(pc_id), "publisher", ip=ip, remote_addr=remote_addr)
-    pcs.add(pc)
-    _log_connection("INFO", str(pc_id), "创建发布者连接")
-
-    @pc.on("track")
-    def on_track(track):
-        _log_connection("INFO", str(pc_id), f"收到发布者媒体轨: kind={track.kind}")
-        if track.kind == "video":
-            published["video"] = relay.subscribe(track)
-            _log_connection("INFO", str(pc_id), "视频轨已发布并订阅")
-        elif track.kind == "audio":
-            published["audio"] = relay.subscribe(track)
-            _log_connection("INFO", str(pc_id), "音频轨已发布并订阅")
-
-    async def handle():
-        _log_connection("INFO", str(pc_id), "开始 SDP 协商")
+async def handle_offer(request: Request) -> Response:
+    """
+    处理客户端推流的 Offer
+    POST /offer
+    Body: {"sdp": "...", "type": "offer"}
+    """
+    try:
+        # 先清理断开的连接
+        await cleanup_closed_connections()
+        
+        payload = await request.json()
+        offer_sdp = payload.get("sdp")
+        offer_type = payload.get("type", "offer")
+        
+        if not offer_sdp:
+            return web.json_response({"error": "missing sdp"}, status=400)
+        
+        pc = RTCPeerConnection()
+        pc_id = str(id(pc))
+        remote_addr = request.remote
+        
+        # 从请求头提取 IP
+        ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or str(remote_addr)
+        
+        # 清理相同 IP 的旧发布者连接
+        old_pcs_to_close = []
+        for old_pc in list(pcs):
+            old_pc_id = str(id(old_pc))
+            old_info = pc_info.get(old_pc_id, {})
+            if old_info.get("type") == "publisher" and old_info.get("ip") == ip:
+                old_pcs_to_close.append(old_pc)
+                _log_connection("INFO", old_pc_id, f"发现相同 IP ({ip}) 的旧发布者连接，准备关闭")
+        
+        # 关闭旧连接
+        for old_pc in old_pcs_to_close:
+            try:
+                old_pc_id = str(id(old_pc))
+                await old_pc.close()
+                pcs.discard(old_pc)
+                pc_info.pop(old_pc_id, None)
+                _log_connection("INFO", old_pc_id, "旧发布者连接已关闭")
+            except Exception as e:
+                _log_connection("ERROR", str(id(old_pc)), f"关闭旧连接失败: {e}")
+        
+        # 如果清理了旧连接，也清理发布轨
+        if old_pcs_to_close:
+            published["video"] = None
+            published["audio"] = None
+            _log_connection("INFO", pc_id, "已清理旧发布轨")
+        
+        _setup_pc_logging(pc, pc_id, "publisher", ip=ip, remote_addr=str(remote_addr))
+        pcs.add(pc)
+        _log_connection("INFO", pc_id, f"创建发布者连接 (IP: {ip})")
+        
+        @pc.on("track")
+        def on_track(track):
+            _log_connection("INFO", pc_id, f"收到发布者媒体轨: kind={track.kind}")
+            if track.kind == "video":
+                published["video"] = relay.subscribe(track)
+                _log_connection("INFO", pc_id, "视频轨已发布并订阅")
+            elif track.kind == "audio":
+                published["audio"] = relay.subscribe(track)
+                _log_connection("INFO", pc_id, "音频轨已发布并订阅")
+        
+        # SDP 协商
         await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type=offer_type))
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
-        _log_connection("INFO", str(pc_id), "SDP 协商完成，返回 Answer")
-        return pc.localDescription
-
-    try:
-        local_desc = _run_async(handle())
-        return jsonify({"sdp": local_desc.sdp, "type": local_desc.type})
+        
+        _log_connection("INFO", pc_id, "SDP 协商完成，返回 Answer")
+        
+        return web.json_response({
+            "sdp": pc.localDescription.sdp,
+            "type": pc.localDescription.type
+        })
+        
     except Exception as e:
-        _log_connection("ERROR", str(pc_id), f"发布协商失败: {e}")
-        raise
+        _log_connection("ERROR", "unknown", f"处理 Offer 失败: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 
-@app.route("/view", methods=["POST"])
-def webrtc_view():
-    """观看接口：观众端发送 Offer，服务器把已发布轨添加后返回 Answer"""
-    payload = request.json or {}
-    offer_sdp = payload.get("sdp")
-    offer_type = payload.get("type", "offer")
-    timeout_s = payload.get("timeout")
-    if not offer_sdp:
-        return jsonify({"error": "missing sdp"}), 400
-
-    pc = RTCPeerConnection()
-    pc_id = id(pc)
-    remote_addr = request.remote_addr
-    ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or remote_addr
-    
-    _setup_pc_logging(pc, str(pc_id), "viewer", ip=ip, remote_addr=remote_addr)
-    pcs.add(pc)
-    _log_connection("INFO", str(pc_id), "创建观众连接")
-
-    async def handle():
-        # 等待发布端上线（timeout<=0 表示无限等待）
+async def handle_view(request: Request) -> Response:
+    """
+    处理网页预览的 Offer
+    POST /view
+    Body: {"sdp": "...", "type": "offer", "timeout": 0}
+    """
+    try:
+        payload = await request.json()
+        offer_sdp = payload.get("sdp")
+        offer_type = payload.get("type", "offer")
+        timeout_s = payload.get("timeout")
+        
+        if not offer_sdp:
+            return web.json_response({"error": "missing sdp"}, status=400)
+        
+        pc = RTCPeerConnection()
+        pc_id = str(id(pc))
+        remote_addr = request.remote
+        ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or str(remote_addr)
+        
+        _setup_pc_logging(pc, pc_id, "viewer", ip=ip, remote_addr=str(remote_addr))
+        pcs.add(pc)
+        _log_connection("INFO", pc_id, "创建观众连接")
+        
+        # 等待发布端上线
         if not (published["video"] or published["audio"]):
-            _log_connection("INFO", str(pc_id), "等待发布端上线...")
-            loop = asyncio.get_running_loop()
+            _log_connection("INFO", pc_id, "等待发布端上线...")
             if timeout_s is None or float(timeout_s) <= 0:
-                # 无限等待，直至有发布轨
+                # 无限等待
                 wait_start = time.time()
                 while not (published["video"] or published["audio"]):
                     await asyncio.sleep(0.2)
                 wait_duration = time.time() - wait_start
-                _log_connection("INFO", str(pc_id), f"发布端已上线，等待耗时: {wait_duration:.2f}秒")
+                _log_connection("INFO", pc_id, f"发布端已上线，等待耗时: {wait_duration:.2f}秒")
             else:
-                deadline = loop.time() + float(timeout_s)
+                deadline = time.time() + float(timeout_s)
                 wait_start = time.time()
-                while not (published["video"] or published["audio"]) and loop.time() < deadline:
+                while not (published["video"] or published["audio"]) and time.time() < deadline:
                     await asyncio.sleep(0.2)
                 if not (published["video"] or published["audio"]):
                     wait_duration = time.time() - wait_start
-                    _log_connection("WARN", str(pc_id), f"等待超时，无发布轨可用 | 等待时长: {wait_duration:.2f}秒")
-                    return None
+                    _log_connection("WARN", pc_id, f"等待超时，无发布轨可用 | 等待时长: {wait_duration:.2f}秒")
+                    return web.json_response({"error": "no published tracks"}, status=409)
                 wait_duration = time.time() - wait_start
-                _log_connection("INFO", str(pc_id), f"发布端已上线，等待耗时: {wait_duration:.2f}秒")
-
-        # 将已发布轨添加到观众连接
+                _log_connection("INFO", pc_id, f"发布端已上线，等待耗时: {wait_duration:.2f}秒")
+        
+        # 添加已发布的轨
         tracks_added = []
         if published["video"]:
             pc.addTrack(published["video"])
@@ -189,28 +216,182 @@ def webrtc_view():
         if published["audio"]:
             pc.addTrack(published["audio"])
             tracks_added.append("audio")
-        _log_connection("INFO", str(pc_id), f"已添加媒体轨: {', '.join(tracks_added)}")
-
-        _log_connection("INFO", str(pc_id), "开始 SDP 协商")
+        _log_connection("INFO", pc_id, f"已添加媒体轨: {', '.join(tracks_added)}")
+        
+        # SDP 协商
         await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type=offer_type))
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
-        _log_connection("INFO", str(pc_id), "SDP 协商完成，返回 Answer")
-        return pc.localDescription
-
-    try:
-        local_desc = _run_async(handle())
-        if local_desc is None:
-            _log_connection("ERROR", str(pc_id), "协商失败: 无发布轨可用")
-            return jsonify({"error": "no published tracks"}), 409
-        return jsonify({"sdp": local_desc.sdp, "type": local_desc.type})
+        
+        _log_connection("INFO", pc_id, "SDP 协商完成，返回 Answer")
+        
+        return web.json_response({
+            "sdp": pc.localDescription.sdp,
+            "type": pc.localDescription.type
+        })
+        
     except Exception as e:
-        _log_connection("ERROR", str(pc_id), f"观看协商失败: {e}")
-        raise
+        _log_connection("ERROR", "unknown", f"处理 View 失败: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 
-PREVIEW_HTML = """
-<!doctype html>
+async def handle_viewer_open(request: Request) -> Response:
+    """处理观众进入通知"""
+    global VIEWER_ACTIVE
+    VIEWER_ACTIVE = True
+    
+    payload = await request.json()
+    ip = payload.get("ip")
+    
+    if ip and ip != '-':
+        try:
+            requests.patch(
+                f"{BACKEND_BASE}/api/folders/{ip}/webrtc_direct",
+                json={"webrtc_direct": True},
+                timeout=2
+            )
+            print(f"[viewer/open] IP={ip} | webrtc_direct 已更新为 1")
+        except Exception as e:
+            print(f"[viewer/open] 更新 webrtc_direct 失败: {e}")
+    
+    return web.json_response({"viewer": True})
+
+
+async def handle_viewer_close(request: Request) -> Response:
+    """处理观众离开通知，关闭所有连接"""
+    global VIEWER_ACTIVE, published
+    
+    payload = await request.json()
+    ip = payload.get("ip", "N/A")
+    remote_addr = request.remote
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] [INFO] [VIEWER_CLOSE] IP={ip} Remote={remote_addr} | 开始关闭所有连接")
+    
+    VIEWER_ACTIVE = False
+    
+    # 更新后端状态
+    if ip and ip != '-' and ip != 'N/A':
+        try:
+            requests.patch(
+                f"{BACKEND_BASE}/api/folders/{ip}/webrtc_direct",
+                json={"webrtc_direct": False},
+                timeout=2
+            )
+            print(f"[{timestamp}] [INFO] [VIEWER_CLOSE] IP={ip} | webrtc_direct 已更新为 0")
+        except Exception as e:
+            print(f"[{timestamp}] [ERROR] [VIEWER_CLOSE] IP={ip} | 更新失败: {e}")
+    
+    # 关闭所有连接
+    closed_count = 0
+    publisher_count = 0
+    viewer_count = 0
+    
+    for pc in list(pcs):
+        pc_id = str(id(pc))
+        info = pc_info.get(pc_id, {})
+        conn_type = info.get("type", "unknown")
+        
+        if conn_type == "publisher":
+            publisher_count += 1
+        elif conn_type == "viewer":
+            viewer_count += 1
+        
+        try:
+            current_state = pc.connectionState if hasattr(pc, 'connectionState') else "unknown"
+            _log_connection("INFO", pc_id, f"主动关闭{conn_type}连接 | 当前状态: {current_state}")
+            await pc.close()
+            closed_count += 1
+        except Exception as e:
+            _log_connection("ERROR", pc_id, f"关闭连接时出错: {e}")
+        finally:
+            pcs.discard(pc)
+            pc_info.pop(pc_id, None)
+    
+    # 清空发布轨
+    had_video = published["video"] is not None
+    had_audio = published["audio"] is not None
+    published = {"video": None, "audio": None}
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] [INFO] [VIEWER_CLOSE] IP={ip} | 关闭完成:")
+    print(f"  - 关闭连接数: {closed_count} (发布者: {publisher_count}, 观众: {viewer_count})")
+    print(f"  - 发布轨清理: video={'已清空' if had_video else '无'}, audio={'已清空' if had_audio else '无'}")
+    print(f"  - 剩余连接数: {len(pcs)}")
+    
+    return web.json_response({"viewer": False, "closed": closed_count})
+
+
+async def cleanup_closed_connections() -> None:
+    """清理已关闭的连接"""
+    closed_pcs = []
+    for pc in list(pcs):
+        pc_id = str(id(pc))
+        try:
+            state = pc.connectionState if hasattr(pc, 'connectionState') else "unknown"
+            if state in ("closed", "failed", "disconnected"):
+                closed_pcs.append((pc, pc_id))
+        except Exception:
+            # 如果无法获取状态，也认为连接已断开
+            closed_pcs.append((pc, pc_id))
+    
+    # 清理断开的连接
+    for pc, pc_id in closed_pcs:
+        try:
+            info = pc_info.pop(pc_id, {})
+            pcs.discard(pc)
+            conn_type = info.get("type", "unknown")
+            _log_connection("INFO", pc_id, f"清理断开的{conn_type}连接")
+            
+            # 如果是发布者连接，清理发布轨
+            if conn_type == "publisher":
+                if published["video"] is not None:
+                    published["video"] = None
+                if published["audio"] is not None:
+                    published["audio"] = None
+        except Exception as e:
+            _log_connection("ERROR", pc_id, f"清理连接时出错: {e}")
+
+
+async def handle_status(request: Request) -> Response:
+    """获取服务器状态（用于调试）"""
+    # 先清理断开的连接
+    await cleanup_closed_connections()
+    
+    publisher_count = len([p for p in pcs if pc_info.get(str(id(p)), {}).get("type") == "publisher"])
+    viewer_count = len([p for p in pcs if pc_info.get(str(id(p)), {}).get("type") == "viewer"])
+    
+    # 检查连接状态
+    active_publishers = []
+    for pc in pcs:
+        pc_id = str(id(pc))
+        info = pc_info.get(pc_id, {})
+        if info.get("type") == "publisher":
+            try:
+                state = pc.connectionState if hasattr(pc, 'connectionState') else "unknown"
+            except Exception:
+                state = "error"
+            active_publishers.append({
+                "pc_id": pc_id[:8],
+                "ip": info.get("ip", "N/A"),
+                "state": state,
+                "created_at": info.get("created_at", 0)
+            })
+    
+    return web.json_response({
+        "total_connections": len(pcs),
+        "publisher_count": publisher_count,
+        "viewer_count": viewer_count,
+        "has_video": published["video"] is not None,
+        "has_audio": published["audio"] is not None,
+        "viewer_active": VIEWER_ACTIVE,
+        "active_publishers": active_publishers
+    })
+
+
+async def handle_preview(request: Request) -> Response:
+    """返回预览页面 HTML"""
+    html = """<!doctype html>
 <html lang=zh-CN>
 <head>
   <meta charset=utf-8>
@@ -232,23 +413,18 @@ PREVIEW_HTML = """
     </div>
   </div>
 
-<script>
+  <script>
 const player = document.getElementById('player');
-const urlParams = new URLSearchParams(location.search);
-const ip = urlParams.get('ip') || '-';
-document.getElementById('ip').textContent = `(${ip})`;
+    const urlParams = new URLSearchParams(location.search);
+    const ip = urlParams.get('ip') || '-';
+    document.getElementById('ip').textContent = `(${ip})`;
 
 let currentPC = null;
 let releaseHandler = null;
 
-// 清理函数
 function cleanup() {
   if (currentPC) {
-    try {
-      currentPC.close();
-    } catch (e) {
-      console.error('关闭连接失败:', e);
-    }
+    try { currentPC.close(); } catch (e) { console.error('关闭连接失败:', e); }
     currentPC = null;
   }
   if (releaseHandler) {
@@ -256,16 +432,13 @@ function cleanup() {
     window.removeEventListener('beforeunload', releaseHandler);
     releaseHandler = null;
   }
-  // 清空视频源
   if (player && player.srcObject) {
     player.srcObject.getTracks().forEach(track => track.stop());
     player.srcObject = null;
   }
 }
 
-// 每次尝试建立连接
 async function setupViewer(retryCount = 0) {
-  // 先清理旧连接
   cleanup();
   
   try {
@@ -273,38 +446,45 @@ async function setupViewer(retryCount = 0) {
       iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
     });
 
-    // 设置 track 事件处理
     currentPC.ontrack = (e) => {
-      console.log('收到媒体轨:', e.track.kind);
+      const statusDiv = document.getElementById('connection-status');
+      if (statusDiv) statusDiv.remove();
       if (e.streams && e.streams[0]) {
         player.srcObject = e.streams[0];
-        console.log('视频源已设置');
+        player.play().catch(err => console.error('播放失败:', err));
       }
     };
 
-    // 监听连接状态
     currentPC.onconnectionstatechange = () => {
-      console.log('连接状态:', currentPC.connectionState);
-      if (currentPC.connectionState === 'failed' || currentPC.connectionState === 'closed') {
-        console.log('连接断开，准备重连...');
-        setTimeout(() => {
-          if (retryCount < 5) {
-            setupViewer(retryCount + 1);
-          }
-        }, 2000);
+      const state = currentPC.connectionState;
+      console.log('连接状态:', state);
+      if (state === 'connected') {
+        const statusDiv = document.getElementById('connection-status');
+        if (statusDiv) statusDiv.remove();
+      } else if (state === 'failed' || state === 'closed') {
+        cleanup();
+        if (retryCount < 5) {
+          setTimeout(() => setupViewer(retryCount + 1), 2000);
+        }
       }
     };
 
-    // 通知服务端：观众进入
     await fetch('/viewer/open', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ip })
     });
+    
+    const statusDiv = document.createElement('div');
+    statusDiv.id = 'connection-status';
+    statusDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.8); color: white; padding: 10px 20px; border-radius: 5px; z-index: 1000;';
+    statusDiv.textContent = '等待客户端连接...';
+    document.body.appendChild(statusDiv);
+    
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    statusDiv.textContent = '正在建立连接...';
 
-    // 明确声明接收端媒体
     currentPC.addTransceiver('video', { direction: 'recvonly' });
-
     const offer = await currentPC.createOffer();
     await currentPC.setLocalDescription(offer);
 
@@ -321,11 +501,8 @@ async function setupViewer(retryCount = 0) {
 
     const answer = await resp.json();
     if (!answer.sdp) throw new Error("Server did not return SDP");
-
     await currentPC.setRemoteDescription(answer);
-    console.log('连接建立成功');
 
-    // 离开页面时关闭连接（只设置一次）
     releaseHandler = () => {
       fetch('/viewer/close', {
         method: 'POST',
@@ -342,107 +519,66 @@ async function setupViewer(retryCount = 0) {
     console.error('viewer setup failed:', err);
     cleanup();
     if (retryCount < 5) {
-      // 自动重试
       setTimeout(() => setupViewer(retryCount + 1), 2000);
     } else {
-      alert('预览初始化失败，请刷新页面重试');
+      alert('预览初始化失败，请刷新页面重试: ' + err.message);
     }
   }
 }
 
-// 启动
 setupViewer();
-</script>
+  </script>
 </body>
-</html>
-"""
+</html>"""
+    return web.Response(text=html, content_type='text/html')
 
 
-@app.route('/preview')
-def preview():
-    return render_template_string(PREVIEW_HTML)
+def create_app() -> web.Application:
+    """创建 aiohttp 应用"""
+    app = web.Application()
+    
+    # 路由
+    app.router.add_post('/offer', handle_offer)
+    app.router.add_post('/view', handle_view)
+    app.router.add_post('/viewer/open', handle_viewer_open)
+    app.router.add_post('/viewer/close', handle_viewer_close)
+    app.router.add_get('/preview', handle_preview)
+    app.router.add_get('/status', handle_status)
+    
+    # CORS 支持
+    @web.middleware
+    async def cors_middleware(request: Request, handler):
+        if request.method == 'OPTIONS':
+            return web.Response(headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type',
+            })
+        response = await handler(request)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        return response
+    
+    app.middlewares.append(cors_middleware)
+    
+    return app
 
-@app.route('/viewer/open', methods=['POST'])
-def viewer_open():
-    global VIEWER_ACTIVE
-    VIEWER_ACTIVE = True
-    # 从请求中获取 IP，更新后端 webrtc_direct=1
-    payload = request.json or {}
-    ip = payload.get("ip")
-    if ip and ip != '-':
-        try:
-            requests.patch(
-                f"{BACKEND_BASE}/api/folders/{ip}/webrtc_direct",
-                json={"webrtc_direct": True},
-                timeout=2
-            )
-        except Exception as e:
-            print(f"[viewer/open] 更新 webrtc_direct 失败: {e}")
-    return jsonify({"viewer": True})
+
+async def init_app() -> web.Application:
+    """初始化应用"""
+    return create_app()
 
 
-@app.route('/viewer/close', methods=['POST'])
-def viewer_close():
-    global VIEWER_ACTIVE, published
-    payload = request.json or {}
-    ip = payload.get("ip", "N/A")
-    remote_addr = request.remote_addr
-    
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [INFO] [VIEWER_CLOSE] IP={ip} Remote={remote_addr} | 开始关闭观众连接")
-    
-    VIEWER_ACTIVE = False
-    
-    # 从请求中获取 IP，更新后端 webrtc_direct=0
-    if ip and ip != '-' and ip != 'N/A':
-        try:
-            requests.patch(
-                f"{BACKEND_BASE}/api/folders/{ip}/webrtc_direct",
-                json={"webrtc_direct": False},
-                timeout=2
-            )
-            print(f"[{timestamp}] [INFO] [VIEWER_CLOSE] IP={ip} | webrtc_direct 已更新为 0")
-        except Exception as e:
-            print(f"[{timestamp}] [ERROR] [VIEWER_CLOSE] IP={ip} | 更新 webrtc_direct 失败: {e}")
-    
-    # 只关闭观众连接，保留发布者连接和发布轨
-    closed_count = 0
-    viewer_count = 0
-    
-    for pc in list(pcs):
-        pc_id = str(id(pc))
-        info = pc_info.get(pc_id, {})
-        conn_type = info.get("type", "unknown")
-        
-        # 只关闭观众连接
-        if conn_type == "viewer":
-            viewer_count += 1
-            try:
-                current_state = pc.connectionState if hasattr(pc, 'connectionState') else "unknown"
-                _log_connection("INFO", pc_id, f"主动关闭观众连接 | 当前状态: {current_state}")
-                _run_async(pc.close())
-                closed_count += 1
-            except Exception as e:
-                _log_connection("ERROR", pc_id, f"关闭连接时出错: {e}")
-            finally:
-                pcs.discard(pc)
-                pc_info.pop(pc_id, None)
-    
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    publisher_count = len([p for p in pcs if pc_info.get(str(id(p)), {}).get("type") == "publisher"])
-    print(f"[{timestamp}] [INFO] [VIEWER_CLOSE] IP={ip} | 关闭完成:")
-    print(f"  - 关闭观众连接数: {closed_count}")
-    print(f"  - 保留发布者连接数: {publisher_count}")
-    print(f"  - 发布轨状态: video={'有' if published['video'] else '无'}, audio={'有' if published['audio'] else '无'}")
-    print(f"  - 剩余连接数: {len(pcs)}")
-    
-    return jsonify({"viewer": False, "closed": closed_count})
+def start_webrtc_server() -> None:
+    """启动 WebRTC 服务器（供 backend.py 调用）"""
+    main()
 
-def start_webrtc_server():
+
+def main() -> None:
     """启动 WebRTC 服务器"""
-    print("🚀 启动 WebRTC 服务器 (port 5002)")
-    app.run(host="0.0.0.0", port=5002, debug=False)
+    print(f"🚀 启动 WebRTC 服务器 (port {SERVER_PORT})")
+    app = init_app()
+    web.run_app(app, host="0.0.0.0", port=SERVER_PORT)
+
 
 if __name__ == "__main__":
-    start_webrtc_server()
-
+    main()
