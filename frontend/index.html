@@ -25,7 +25,7 @@
       </button>
       <div class="collapse navbar-collapse" id="navContent">
         <div class="ms-auto d-flex gap-2">
-          <input id="searchInput" class="form-control form-control-sm" placeholder="搜索 IP / 备注" style="width: 220px;">
+          <input id="searchInput" class="form-control form-control-sm" placeholder="搜索 IP 或备注名" style="width: 220px;" type="search">
           <button class="btn btn-outline-light btn-sm" onclick="logout()">
             <i class="bi bi-box-arrow-right"></i> 退出
           </button>
@@ -246,11 +246,34 @@
       }
     });
 
-    // 过滤
+    // 搜索功能：支持 IP 和备注名搜索
+    let searchTimeout = null;
     document.getElementById('searchInput').addEventListener('input', (e) => {
-      const q = e.target.value.trim().toLowerCase();
-      const filtered = allFolders.filter(f => `${f.ip} ${f.remark || ''}`.toLowerCase().includes(q));
-      renderFolders(filtered);
+      const query = e.target.value.trim();
+      
+      // 清除之前的定时器
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+      }
+      
+      // 如果搜索关键词为空，显示所有文件夹
+      if (!query) {
+        renderFolders(allFolders);
+        return;
+      }
+      
+      // 防抖：300ms 后执行搜索
+      searchTimeout = setTimeout(async () => {
+        const q = query.toLowerCase();
+        // 客户端搜索：支持 IP 和备注的模糊匹配
+        const filtered = allFolders.filter(f => {
+          const ip = (f.ip || '').toLowerCase();
+          const remark = (f.remark || '').toLowerCase();
+          // 支持 IP 或备注的模糊匹配
+          return ip.includes(q) || remark.includes(q);
+        });
+        renderFolders(filtered);
+      }, 300);
     });
 
     function showError(msg) {

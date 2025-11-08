@@ -109,12 +109,25 @@ def check_login():
 @app.route("/api/folders", methods=["GET"])
 @login_required
 def list_folders():
-    """获取所有文件夹列表（以数据库 folders 为准，再补充文件与状态信息）"""
+    """获取所有文件夹列表（以数据库 folders 为准，再补充文件与状态信息）
+    支持搜索参数：?q=关键词（搜索 IP 或备注）
+    """
     db = get_db()
     folders = []
 
-    # 1) 先从数据库读取所有 folders 记录
-    rows = db.execute('SELECT ip, remark, updated_at, upload_enabled, webrtc_direct FROM folders ORDER BY ip').fetchall()
+    # 获取搜索关键词
+    search_query = request.args.get("q", "").strip()
+    
+    # 1) 从数据库读取 folders 记录，支持搜索
+    if search_query:
+        # 使用 LIKE 进行模糊搜索，支持 IP 和备注
+        search_pattern = f"%{search_query}%"
+        rows = db.execute(
+            'SELECT ip, remark, updated_at, upload_enabled, webrtc_direct FROM folders WHERE ip LIKE ? OR remark LIKE ? ORDER BY ip',
+            (search_pattern, search_pattern)
+        ).fetchall()
+    else:
+        rows = db.execute('SELECT ip, remark, updated_at, upload_enabled, webrtc_direct FROM folders ORDER BY ip').fetchall()
 
     # 2) 逐条补充视频与在线信息
     for row in rows:
