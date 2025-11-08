@@ -7,14 +7,16 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
   <style>
-    .folder-card { transition: transform .2s, box-shadow .2s; cursor: pointer; }
-    .folder-card:hover { transform: translateY(-4px); box-shadow: 0 0.75rem 1.25rem rgba(0,0,0,.08); }
-    .folder-icon { font-size: 2.75rem; color: #667eea; }
+    .folder-card { transition: transform .2s, box-shadow .2s, border-color .2s; cursor: pointer; border: 1px solid #dee2e6; }
+    .folder-card:hover { transform: translateY(-4px); box-shadow: 0 0.75rem 1.25rem rgba(0,0,0,.08); border-color: #667eea; }
+    .folder-card:hover .folder-icon { color: #667eea; }
+    .folder-icon { font-size: 2.75rem; color: #667eea; transition: color .2s; }
     .skeleton { background: linear-gradient(90deg, #f2f2f2 25%, #e9ecef 37%, #f2f2f2 63%); background-size: 400% 100%; animation: shimmer 1.4s infinite; }
     @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
     .upload-switch { display: flex; align-items: center; gap: 0.5rem; }
     .upload-switch .form-check-input { margin-top: 0; }
     .upload-switch .form-check-label { margin-bottom: 0; user-select: none; }
+    .folder-card .btn, .folder-card .form-check { pointer-events: auto; }
   </style>
 </head>
 <body class="bg-light">
@@ -41,9 +43,6 @@
     <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
       <h4 class="mb-0"><i class="bi bi-folder-check"></i> 视频文件夹</h4>
       <div class="d-flex gap-2">
-        <button id="previewBtn" class="btn btn-success" disabled>
-          <i class="bi bi-broadcast"></i> 开启实时预览
-        </button>
         <button id="refreshBtn" class="btn btn-primary" onclick="refreshFolders()">
           <i class="bi bi-arrow-clockwise"></i> 刷新
         </button>
@@ -127,14 +126,13 @@
     const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
 
     let allFolders = [];
-    let selectedIP = null;
 
-    document.getElementById('previewBtn').addEventListener('click', async () => {
-      if (!selectedIP) return;
+    // 打开实时预览
+    function openPreview(ip) {
       const frame = document.getElementById('previewFrame');
-      frame.src = `${WEBRTC_BASE}/preview?ip=${encodeURIComponent(selectedIP)}`;
+      frame.src = `${WEBRTC_BASE}/preview?ip=${encodeURIComponent(ip)}`;
       previewModal.show();
-    });
+    }
 
     // 检查登录状态
     async function checkAuth() {
@@ -183,12 +181,9 @@
 
       container.innerHTML = folders.map(folder => `
         <div class="col-12 col-sm-6 col-lg-4 col-xl-3">
-          <div class="folder-card card shadow-sm">
+          <div class="folder-card card shadow-sm" onclick="openPreview('${folder.ip}')" style="cursor: pointer;">
             <div class="card-body py-3">
               <div class="d-flex align-items-start justify-content-between">
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="folderRadio" value="${folder.ip}" ${selectedIP===folder.ip?'checked':''} />
-                </div>
                 <div class="text-end w-100">
                   <div class="d-flex align-items-center justify-content-between">
                     <div class="d-flex align-items-center gap-2">
@@ -201,7 +196,7 @@
                   </div>
                   <div class="text-muted small mt-1"><i class="bi bi-camera-video"></i> ${folder.video_count} 个视频</div>
                   ${folder.last_upload_at ? `<div class="text-muted small">最近上传：${folder.last_upload_at}</div>` : ''}
-                  <div class="d-flex align-items-center gap-2 mt-2 mb-2">
+                  <div class="d-flex align-items-center gap-2 mt-2 mb-2" onclick="event.stopPropagation();">
                     <div class="form-check form-switch upload-switch">
                       <input class="form-check-input" type="checkbox" id="uploadEnabled_${folder.ip.replace(/\./g, '_')}" 
                              ${folder.upload_enabled ? 'checked' : ''} 
@@ -213,12 +208,12 @@
                       </label>
                     </div>
                   </div>
-                  <div class="d-flex align-items-center gap-2 mt-2">
+                  <div class="d-flex align-items-center gap-2 mt-2" onclick="event.stopPropagation();">
                     ${folder.remark ? `<span class="text-info small">${folder.remark}</span>` : '<span class="text-muted small">无备注</span>'}
-                    <button class="btn btn-sm btn-outline-primary" onclick="openRemark('${folder.ip}', '${(folder.remark||'').replace(/'/g, "&#39;")}')">
+                    <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); openRemark('${folder.ip}', '${(folder.remark||'').replace(/'/g, "&#39;")}')">
                       <i class="bi bi-pencil"></i> 编辑备注
                     </button>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="viewFolder('${folder.ip}')">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); viewFolder('${folder.ip}')">
                       <i class="bi bi-collection-play"></i> 查看视频
                     </button>
                   </div>
@@ -228,13 +223,6 @@
           </div>
         </div>`).join('');
 
-      // 绑定单选事件
-      container.querySelectorAll('input[name="folderRadio"]').forEach(r => {
-        r.addEventListener('change', (e) => {
-          selectedIP = e.target.value;
-          document.getElementById('previewBtn').disabled = !selectedIP;
-        });
-      });
     }
 
     function openRemark(ip, remark) {
