@@ -394,6 +394,27 @@ def heartbeat(ip):
     })
 
 
+@app.route("/api/folders/<ip>/upload_enabled", methods=["PATCH"])
+@login_required
+def update_upload_enabled(ip):
+    """更新视频上传开关状态"""
+    data = request.json or {}
+    upload_enabled = data.get("upload_enabled", True)
+    db = get_db()
+    try:
+        # 确保文件夹记录存在
+        cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
+        if not cursor.fetchone():
+            db.execute('INSERT INTO folders (ip, upload_enabled, webrtc_direct) VALUES (?, ?, ?)', (ip, 1, 0))
+        # 更新 upload_enabled
+        db.execute('UPDATE folders SET upload_enabled = ? WHERE ip = ?', 
+                   (1 if upload_enabled else 0, ip))
+        db.commit()
+        return jsonify({"msg": "ok", "ip": ip, "upload_enabled": bool(upload_enabled)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/folders/<ip>/webrtc_direct", methods=["PATCH"])
 def update_webrtc_direct(ip):
     """更新 WebRTC 直连状态（无需登录，供 webrtc_server 调用）"""

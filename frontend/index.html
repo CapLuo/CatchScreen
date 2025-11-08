@@ -12,6 +12,9 @@
     .folder-icon { font-size: 2.75rem; color: #667eea; }
     .skeleton { background: linear-gradient(90deg, #f2f2f2 25%, #e9ecef 37%, #f2f2f2 63%); background-size: 400% 100%; animation: shimmer 1.4s infinite; }
     @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+    .upload-switch { display: flex; align-items: center; gap: 0.5rem; }
+    .upload-switch .form-check-input { margin-top: 0; }
+    .upload-switch .form-check-label { margin-bottom: 0; user-select: none; }
   </style>
 </head>
 <body class="bg-light">
@@ -198,6 +201,18 @@
                   </div>
                   <div class="text-muted small mt-1"><i class="bi bi-camera-video"></i> ${folder.video_count} 个视频</div>
                   ${folder.last_upload_at ? `<div class="text-muted small">最近上传：${folder.last_upload_at}</div>` : ''}
+                  <div class="d-flex align-items-center gap-2 mt-2 mb-2">
+                    <div class="form-check form-switch upload-switch">
+                      <input class="form-check-input" type="checkbox" id="uploadEnabled_${folder.ip.replace(/\./g, '_')}" 
+                             ${folder.upload_enabled ? 'checked' : ''} 
+                             onchange="toggleUploadEnabled('${folder.ip}', this.checked)"
+                             style="cursor: pointer;">
+                      <label class="form-check-label small" for="uploadEnabled_${folder.ip.replace(/\./g, '_')}" style="cursor: pointer;">
+                        <i class="bi ${folder.upload_enabled ? 'bi-cloud-upload' : 'bi-cloud-slash'}"></i> 
+                        <span>${folder.upload_enabled ? '允许上传' : '禁止上传'}</span>
+                      </label>
+                    </div>
+                  </div>
                   <div class="d-flex align-items-center gap-2 mt-2">
                     ${folder.remark ? `<span class="text-info small">${folder.remark}</span>` : '<span class="text-muted small">无备注</span>'}
                     <button class="btn btn-sm btn-outline-primary" onclick="openRemark('${folder.ip}', '${(folder.remark||'').replace(/'/g, "&#39;")}')">
@@ -226,6 +241,71 @@
       document.getElementById('remarkIp').value = ip;
       document.getElementById('remarkInput').value = remark === 'null' ? '' : remark;
       remarkModal.show();
+    }
+
+    // 切换上传开关状态
+    async function toggleUploadEnabled(ip, enabled) {
+      const checkboxId = `uploadEnabled_${ip.replace(/\./g, '_')}`;
+      const checkbox = document.getElementById(checkboxId);
+      // 通过label的for属性找到对应的label，或者通过父元素查找
+      const label = checkbox ? (document.querySelector(`label[for="${checkboxId}"]`) || checkbox.closest('.form-check')?.querySelector('label')) : null;
+      
+      try {
+        const res = await fetch(`${API_BASE}/folders/${encodeURIComponent(ip)}/upload_enabled`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ upload_enabled: enabled })
+        });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.error || '更新失败');
+        }
+        
+        // 更新本地数据
+        const folder = allFolders.find(f => f.ip === ip);
+        if (folder) {
+          folder.upload_enabled = enabled;
+        }
+        
+        // 更新UI：文字和图标
+        if (label) {
+          const icon = label.querySelector('i');
+          const text = label.querySelector('span');
+          if (icon) {
+            icon.className = enabled ? 'bi bi-cloud-upload' : 'bi bi-cloud-slash';
+          }
+          if (text) {
+            text.textContent = enabled ? '允许上传' : '禁止上传';
+          }
+        }
+        
+        showSuccess(enabled ? '已启用视频上传' : '已禁用视频上传');
+      } catch (e) {
+        showError(e.message || '更新失败，请重试');
+        // 恢复checkbox状态
+        if (checkbox) {
+          checkbox.checked = !enabled;
+        }
+        // 恢复UI文字和图标
+        if (label) {
+          const icon = label.querySelector('i');
+          const text = label.querySelector('span');
+          if (icon) {
+            icon.className = !enabled ? 'bi bi-cloud-upload' : 'bi bi-cloud-slash';
+          }
+          if (text) {
+            text.textContent = !enabled ? '允许上传' : '禁止上传';
+          }
+        }
+      }
+    }
+
+    function showSuccess(msg) {
+      const toastEl = document.getElementById('toast');
+      toastEl.className = 'toast text-bg-success';
+      document.getElementById('toastBody').textContent = msg;
+      toast.show();
     }
 
     document.getElementById('saveRemarkBtn').addEventListener('click', async () => {
@@ -277,6 +357,8 @@
     });
 
     function showError(msg) {
+      const toastEl = document.getElementById('toast');
+      toastEl.className = 'toast text-bg-danger';
       document.getElementById('toastBody').textContent = msg;
       toast.show();
     }
