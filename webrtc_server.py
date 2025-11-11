@@ -399,28 +399,130 @@ async def handle_preview(request: Request) -> Response:
   <title>WebRTC 实时预览</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    body { background:#0b0d10; color:#eaecef; }
-    video { width:100%; max-height:80vh; border-radius: 10px; background:#111; }
+    body { background:#0b0d10; color:#eaecef; margin:0; padding:0; }
+    .video-container { position: relative; width: 100%; height: 100vh; display: flex; align-items: center; justify-content: center; }
+    video { width:100%; max-width:100%; max-height:100vh; border-radius: 10px; background:#111; }
+    video:-webkit-full-screen { width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; border-radius: 0; }
+    video:-moz-full-screen { width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; border-radius: 0; }
+    video:-ms-fullscreen { width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; border-radius: 0; }
+    video:fullscreen { width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; border-radius: 0; }
+    .fullscreen-btn { position: absolute; top: 10px; right: 10px; z-index: 1000; background: rgba(0,0,0,0.7); color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; font-size: 18px; line-height: 1; }
+    .fullscreen-btn:hover { background: rgba(0,0,0,0.9); }
+    .fullscreen-btn:active { transform: scale(0.95); }
+    .fullscreen-btn span { display: inline-block; }
   </style>
 </head>
-<body class="p-3 p-md-4">
-  <div class="container">
-    <h5 class="mb-3">实时预览 <small class="text-secondary" id="ip"></small></h5>
-    <div class="card bg-dark border-0 shadow-sm">
-      <div class="card-body">
+<body>
+  <div class="video-container">
         <video id="player" autoplay playsinline controls></video>
-      </div>
-    </div>
+    <button class="fullscreen-btn" id="fullscreenBtn" onclick="toggleFullscreen()" title="全屏 (F11)">
+      <span id="fullscreenIcon">⛶</span>
+    </button>
   </div>
 
   <script>
 const player = document.getElementById('player');
+const fullscreenBtn = document.getElementById('fullscreenBtn');
+const fullscreenIcon = document.getElementById('fullscreenIcon');
     const urlParams = new URLSearchParams(location.search);
     const ip = urlParams.get('ip') || '-';
-    document.getElementById('ip').textContent = `(${ip})`;
 
 let currentPC = null;
 let releaseHandler = null;
+
+// 全屏功能
+function toggleFullscreen() {
+  try {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.mozFullScreenElement && !document.msFullscreenElement) {
+      // 进入全屏 - 优先使用视频容器，如果失败则使用视频元素
+      const videoContainer = player.parentElement;
+      
+      // 尝试容器全屏
+      if (videoContainer.requestFullscreen) {
+        videoContainer.requestFullscreen().catch(err => {
+          console.log('容器全屏失败，尝试视频元素全屏:', err);
+          // 如果容器全屏失败，尝试视频元素全屏
+          requestVideoFullscreen();
+        });
+      } else if (videoContainer.webkitRequestFullscreen) {
+        videoContainer.webkitRequestFullscreen();
+      } else if (videoContainer.mozRequestFullScreen) {
+        videoContainer.mozRequestFullScreen();
+      } else if (videoContainer.msRequestFullscreen) {
+        videoContainer.msRequestFullscreen();
+      } else {
+        // 直接使用视频元素全屏
+        requestVideoFullscreen();
+      }
+    } else {
+      // 退出全屏
+      exitFullscreen();
+    }
+  } catch (error) {
+    console.error('全屏操作失败:', error);
+    // 如果所有方法都失败，尝试使用视频元素的全屏
+    requestVideoFullscreen();
+  }
+}
+
+// 视频元素全屏
+function requestVideoFullscreen() {
+  if (player.requestFullscreen) {
+    player.requestFullscreen().catch(err => console.error('视频全屏失败:', err));
+  } else if (player.webkitRequestFullscreen) {
+    player.webkitRequestFullscreen();
+  } else if (player.webkitEnterFullscreen) {
+    player.webkitEnterFullscreen(); // iOS Safari
+  } else if (player.mozRequestFullScreen) {
+    player.mozRequestFullScreen();
+  } else if (player.msRequestFullscreen) {
+    player.msRequestFullscreen();
+  } else {
+    console.warn('浏览器不支持全屏API');
+    alert('您的浏览器不支持全屏功能');
+  }
+}
+
+// 退出全屏
+function exitFullscreen() {
+  if (document.exitFullscreen) {
+    document.exitFullscreen().catch(err => console.error('退出全屏失败:', err));
+  } else if (document.webkitExitFullscreen) {
+    document.webkitExitFullscreen();
+  } else if (document.mozCancelFullScreen) {
+    document.mozCancelFullScreen();
+  } else if (document.msExitFullscreen) {
+    document.msExitFullscreen();
+  }
+}
+
+// 监听全屏状态变化
+function handleFullscreenChange() {
+  const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+  if (fullscreenBtn) {
+    fullscreenBtn.title = isFullscreen ? '退出全屏 (Esc)' : '全屏 (F11)';
+    // 更新按钮文本和样式
+    if (isFullscreen) {
+      fullscreenBtn.style.opacity = '0.8';
+    } else {
+      fullscreenBtn.style.opacity = '1';
+    }
+  }
+}
+
+// 监听全屏事件
+document.addEventListener('fullscreenchange', handleFullscreenChange);
+document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+// 键盘快捷键：F11 或 Esc 退出全屏
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'F11') {
+    e.preventDefault();
+    toggleFullscreen();
+  }
+});
 
 function cleanup() {
   if (currentPC) {
@@ -502,6 +604,33 @@ async function setupViewer(retryCount = 0) {
     const answer = await resp.json();
     if (!answer.sdp) throw new Error("Server did not return SDP");
     await currentPC.setRemoteDescription(answer);
+
+    // 监听视频控件的全屏事件（原生控件）
+    player.addEventListener('webkitbeginfullscreen', () => {
+      console.log('开始全屏（原生控件）');
+    });
+    player.addEventListener('webkitendfullscreen', () => {
+      console.log('结束全屏（原生控件）');
+    });
+    player.addEventListener('fullscreenchange', () => {
+      handleFullscreenChange();
+    });
+    player.addEventListener('webkitfullscreenchange', () => {
+      handleFullscreenChange();
+    });
+    
+    // 双击视频进入全屏
+    player.addEventListener('dblclick', (e) => {
+      // 如果双击的是视频控件区域，不触发全屏
+      if (e.target === player || e.target.closest('video')) {
+        toggleFullscreen();
+      }
+    });
+    
+    // 确保视频控件支持全屏
+    if (player.webkitSupportsFullscreen !== undefined) {
+      player.webkitSupportsFullscreen = true;
+    }
 
     releaseHandler = () => {
       fetch('/viewer/close', {
