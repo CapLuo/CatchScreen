@@ -77,6 +77,69 @@ def login_required(func):
 def devtools_probe():
     return ("", 204)  # 或返回 {} / 你自定义的配置
 
+@app.route("/api/config", methods=["GET"])
+def get_config():
+    """获取服务器配置信息（用于前端动态配置）
+    自动从请求中获取主机信息，构建正确的URL（包含端口）
+    """
+    # 从请求头获取协议（支持反向代理）
+    protocol = request.headers.get('X-Forwarded-Proto', '') or request.scheme or 'http'
+    # 确保协议格式正确
+    if protocol and not protocol.startswith('http'):
+        protocol = 'https' if protocol == 'https' or request.is_secure else 'http'
+    if not protocol:
+        protocol = 'https' if request.is_secure else 'http'
+    
+    # 从请求头获取主机（支持反向代理）
+    host = request.headers.get('X-Forwarded-Host') or request.headers.get('Host') or request.host
+    
+    # 解析主机名和端口
+    if ':' in host:
+        hostname, current_port = host.rsplit(':', 1)
+    else:
+        hostname = host
+        # 如果没有端口，根据协议推断标准端口
+        current_port = '443' if protocol == 'https' else '80'
+    
+    # 从环境变量获取端口配置（支持自定义端口）
+    api_port = os.environ.get('API_PORT', '5001')
+    webrtc_port = os.environ.get('WEBRTC_PORT', '5002')
+    
+    # 构建URL的函数
+    def build_url(port):
+        """构建包含端口的完整URL
+        对于非标准端口(非80/443)，始终包含端口号
+        对于标准端口，根据实际情况决定是否包含端口
+        """
+        port_str = str(port)
+        # 非标准端口，必须包含端口号
+        if port_str not in ('80', '443'):
+            return f"{protocol}://{hostname}:{port_str}"
+        # 标准端口：如果当前请求使用了标准端口，可以不包含端口
+        # 但如果当前请求使用了非标准端口，标准端口也应该包含端口（避免混淆）
+        if current_port in ('80', '443'):
+            # 当前使用标准端口，目标也是标准端口，可以不包含端口
+            if port_str == '80' and protocol == 'http':
+                return f"http://{hostname}"
+            elif port_str == '443' and protocol == 'https':
+                return f"https://{hostname}"
+        # 其他情况，包含端口（更明确）
+        return f"{protocol}://{hostname}:{port_str}"
+    
+    # 构建配置
+    api_base = f"{build_url(api_port)}/api"
+    webrtc_base = build_url(webrtc_port)
+    uploads_base = f"{build_url(api_port)}/uploads"
+    
+    return jsonify({
+        "apiBase": api_base,
+        "webrtcBase": webrtc_base,
+        "uploadsBase": uploads_base,
+        "hostname": hostname,
+        "apiPort": api_port,
+        "webrtcPort": webrtc_port
+    })
+
 # ---------------- 登录相关 API ----------------
 @app.route("/api/login", methods=["POST"])
 def login():
