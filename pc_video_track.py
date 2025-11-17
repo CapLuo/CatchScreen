@@ -11,7 +11,7 @@
     pip install aiortc mss av numpy opencv-python pillow requests aiohttp
 
 启动示例：
-    python pc_video_track.py --file_server http://127.0.0.1:5001 --rtc_server http://127.0.0.1:5002 --fps 15
+    python pc_video_track.py --file_server http://8.134.173.118:5001 --rtc_server http://8.134.173.118:5002 --fps 15
 """
 import argparse
 import asyncio
@@ -42,7 +42,7 @@ def get_ip_address() -> str:
         s.close()
         return ip_address
     except Exception:
-        return "127.0.0.1"
+        return "8.134.173.118"
 
 
 def get_client_state(server_url: str) -> Tuple[bool, bool]:
@@ -107,7 +107,7 @@ class ScreenShareTrack(VideoStreamTrack):
         record_dir: str = "./records",
         segment_minutes: int = 5,
         codec: str = "avc1",
-        server_url: str = "http://127.0.0.1:5001"
+        server_url: str = "http://8.134.173.118:5001"
     ) -> None:
         """
         初始化屏幕分享轨
@@ -340,7 +340,18 @@ class VideoPublisher:
                         print("[INFO] 已为本次重连创建新的 ScreenShareTrack")
                     
                     # 创建新的 PeerConnection
-                    pc = RTCPeerConnection()
+                    pc = new RTCPeerConnection({
+                        iceServers: [
+                            {
+                                urls: ["stun:8.134.173.118:3478"]
+                            },
+                            {
+                                urls: ["turn:8.134.173.118:3478"],
+                                username: "webrtc",
+                                credential: "wo1990shizhu"
+                            }
+                        ]
+                    });
                     print("[INFO] 创建新的 RTCPeerConnection")
 
                     @pc.on("connectionstatechange")
@@ -423,13 +434,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="屏幕抓取 WebRTC 发布客户端")
     parser.add_argument(
         "--file_server",
-        default="http://127.0.0.1:5001",
-        help="后端文件服务器地址，如 http://127.0.0.1:5001"
+        default="http://8.134.173.118:5001",
+        help="后端文件服务器地址，如 http://8.134.173.118:5001"
     )
     parser.add_argument(
         "--rtc_server",
-        default="http://127.0.0.1:5002",
-        help="WebRTC 服务器地址，如 http://127.0.0.1:5002"
+        default="http://8.134.173.118:5002",
+        help="WebRTC 服务器地址，如 http://8.134.173.118:5002"
     )
     parser.add_argument(
         "--fps",

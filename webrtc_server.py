@@ -545,7 +545,16 @@ async function setupViewer(retryCount = 0) {
   
   try {
     currentPC = new RTCPeerConnection({
-      iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+      iceServers: [
+        {
+          urls: ["stun:8.134.173.118:3478"]
+        },
+        {
+          urls: ["turn:8.134.173.118:3478"],
+          username: "webrtc",
+          credential: "wo1990shizhu"
+        }
+      ]
     });
 
     currentPC.ontrack = (e) => {

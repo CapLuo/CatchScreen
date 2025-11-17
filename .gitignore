@@ -37,3 +37,4 @@ desktop.ini
 #虚拟机
 myenv/
 records/
+*.spec
