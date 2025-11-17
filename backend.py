@@ -480,7 +480,7 @@ def update_upload_enabled(ip):
 
 @app.route("/api/folders/<ip>/webrtc_direct", methods=["PATCH"])
 def update_webrtc_direct(ip):
-    """更新 WebRTC 直连状态（无需登录，供 webrtc_server 调用）"""
+    """更新推流直连状态（无需登录，用于控制客户端 RTMP 推流）"""
     data = request.json or {}
     webrtc_direct = data.get("webrtc_direct", False)
     db = get_db()
@@ -521,11 +521,11 @@ if __name__ == "__main__":
     # 初始化数据库
     init_db()
     
-    # 启动 WebRTC 子进程
+    # 启动 HLS 预览服务子进程
     p = Process(target=start_webrtc_server, daemon=True)
     p.start()
     
-    print("✅ WebRTC 服务已启动 (port 5002)")
+    print("✅ HLS 预览服务已启动 (port 5002)")
     print("✅ 数据库初始化完成")
     print("✅ 后端 API 服务启动 (port 5001)")
     print("📝 访问: http://5001/frontend/login.html")
