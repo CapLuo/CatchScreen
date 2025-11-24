@@ -9,9 +9,28 @@ services:
       - "5002:5002"   # webrtc_server
     environment:
       - PYTHONUNBUFFERED=1
+      - HLS_ROOT=/app/hls  # 告诉 webrtc_server 从哪里读取 HLS
     volumes:
       - ./uploads:/app/uploads
       - ./database.db:/app/database.db
       - ./frontend:/app/frontend
+      - hls_data:/app/hls  # 读取 Nginx 生成的 HLS
     command: ["python", "backend.py"]
+
+  nginx:
+    image: tiangolo/nginx-rtmp
+    container_name: catchscreen-nginx
+    restart: unless-stopped
+    ports:
+      - "1935:1935"   # RTMP 推流端口
+      - "80:80"       # HTTP 统一入口
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - hls_data:/tmp/hls  # 写入 HLS 文件
+    depends_on:
+      - catchscreen
+
+volumes:
+  hls_data:
+
 
