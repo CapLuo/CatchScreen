@@ -12,7 +12,9 @@ from aiohttp.web import Request, Response
 
 # 配置
 SERVER_PORT = int(os.environ.get('WEBRTC_PORT', '5002'))
-HLS_ROOT = os.environ.get('HLS_ROOT', '/var/www/hls')  # HLS 文件根目录
+# HLS_ROOT defaults to a local folder if not specified, for easier local testing
+default_hls_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hls_stream")
+HLS_ROOT = os.environ.get('HLS_ROOT', default_hls_root)
 
 # HLS 播放页面 HTML 模板
 HLS_PREVIEW_HTML = """<!doctype html>

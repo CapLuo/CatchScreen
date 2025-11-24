@@ -38,3 +38,6 @@ desktop.ini
 myenv/
 records/
 *.spec
+
+#客户端
+ffmpeg/
