@@ -126,9 +126,30 @@
     const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
 
     let allFolders = [];
+    let currentPreviewIp = null;
+
+    // 更新推流直连状态
+    async function updateWebrtcDirect(ip, enabled) {
+      try {
+        await fetch(`${API_BASE}/folders/${encodeURIComponent(ip)}/webrtc_direct`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ webrtc_direct: enabled })
+        });
+        const folder = allFolders.find(f => f.ip === ip);
+        if (folder) folder.webrtc_direct = enabled;
+      } catch (e) {
+        console.error('Failed to update webrtc_direct', e);
+      }
+    }
 
     // 打开实时预览
     function openPreview(ip) {
+      currentPreviewIp = ip;
+      // 开启直连推流
+      updateWebrtcDirect(ip, true);
+      
       const frame = document.getElementById('previewFrame');
       frame.src = `${WEBRTC_BASE}/preview?ip=${encodeURIComponent(ip)}`;
       previewModal.show();
@@ -379,6 +400,12 @@
     document.getElementById('previewModal').addEventListener('hidden.bs.modal', async () => {
       const frame = document.getElementById('previewFrame');
       frame.src = 'about:blank';
+      
+      if (currentPreviewIp) {
+        // 关闭直连推流
+        updateWebrtcDirect(currentPreviewIp, false);
+        currentPreviewIp = null;
+      }
     });
 
     // 页面加载

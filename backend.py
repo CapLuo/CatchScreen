@@ -261,7 +261,7 @@ def create_folder():
         # 插入数据库
         db.execute(
             'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct) VALUES (?, ?, ?, ?)',
-            (ip, remark, 1, 1)
+            (ip, remark, 1, 0)
         )
         db.commit()
     except sqlite3.IntegrityError:
@@ -427,7 +427,7 @@ def heartbeat(ip):
         if cursor.fetchone() is None:
             db.execute(
                 'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct) VALUES (?, ?, ?, ?)',
-                (ip, "", 1, 1)
+                (ip, "", 1, 0)
             )
         
         # 更新 folders.updated_at（用于在线状态判断）
@@ -472,7 +472,7 @@ def update_upload_enabled(ip):
         # 确保文件夹记录存在
         cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
         if not cursor.fetchone():
-            db.execute('INSERT INTO folders (ip, upload_enabled, webrtc_direct) VALUES (?, ?, ?)', (ip, 1, 1))
+            db.execute('INSERT INTO folders (ip, upload_enabled, webrtc_direct) VALUES (?, ?, ?)', (ip, 1, 0))
         # 更新 upload_enabled
         db.execute('UPDATE folders SET upload_enabled = ? WHERE ip = ?', 
                    (1 if upload_enabled else 0, ip))
@@ -492,7 +492,7 @@ def update_webrtc_direct(ip):
         # 确保文件夹记录存在
         cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
         if not cursor.fetchone():
-            db.execute('INSERT INTO folders (ip, upload_enabled, webrtc_direct) VALUES (?, ?, ?)', (ip, 1, 1))
+            db.execute('INSERT INTO folders (ip, upload_enabled, webrtc_direct) VALUES (?, ?, ?)', (ip, 1, 0))
         # 更新 webrtc_direct
         db.execute('UPDATE folders SET webrtc_direct = ? WHERE ip = ?', (1 if webrtc_direct else 0, ip))
         db.commit()
@@ -518,12 +518,25 @@ def frontend_index():
 
 
 
+def reset_webrtc_state():
+    """重置所有客户端的推流状态为关闭"""
+    try:
+        with sqlite3.connect(DB_PATH) as db:
+            db.execute('UPDATE folders SET webrtc_direct = 0')
+            db.commit()
+        print("✅ 已重置所有推流状态为关闭")
+    except Exception as e:
+        print(f"⚠️ 重置推流状态失败: {e}")
+
+
 # ---------------- 启动 ----------------
 if __name__ == "__main__":
     from multiprocessing import freeze_support
     freeze_support()
     # 初始化数据库
     init_db()
+    # 重置推流状态
+    reset_webrtc_state()
     
     # 启动 HLS 预览服务子进程
     p = Process(target=start_webrtc_server, daemon=True)
