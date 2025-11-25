@@ -6,9 +6,59 @@ HLS 预览服务器
 - 返回 HLS 播放页面或等待状态
 """
 import os
+import sys
+import logging
+from logging.handlers import TimedRotatingFileHandler
 from typing import Optional
 from aiohttp import web
 from aiohttp.web import Request, Response
+
+# -----------------------
+# 日志配置
+# -----------------------
+LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
+
+class DualWriter:
+    """同时写入 原始stdout 和 日志文件"""
+    def __init__(self, original_stream, file_handler):
+        self.original_stream = original_stream
+        self.file_handler = file_handler
+        self.logger = logging.getLogger("print_logger_webrtc")
+        self.logger.addHandler(file_handler)
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False
+
+    def write(self, message):
+        self.original_stream.write(message)
+        self.original_stream.flush()
+        if message.strip():
+            record = logging.LogRecord(
+                name="print", level=logging.INFO, pathname="", lineno=0,
+                msg=message.strip(), args=(), exc_info=None
+            )
+            self.file_handler.emit(record)
+
+    def flush(self):
+        self.original_stream.flush()
+
+def setup_logging():
+    """配置日志：按天轮转，永久保留"""
+    os.makedirs(LOG_DIR, exist_ok=True)
+    
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    log_file = os.path.join(LOG_DIR, "webrtc.log")
+    file_handler = TimedRotatingFileHandler(
+        log_file, when='midnight', interval=1, backupCount=0, encoding='utf-8'
+    )
+    file_handler.suffix = "%Y-%m-%d"
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    sys.stdout = DualWriter(sys.stdout, file_handler)
+    sys.stderr = DualWriter(sys.stderr, file_handler)
 
 # 配置
 SERVER_PORT = int(os.environ.get('WEBRTC_PORT', '5002'))

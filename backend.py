@@ -7,6 +7,9 @@ Flask 后端 API - 视频上传管理系统
 import os
 import shutil
 import sqlite3
+import sys
+import logging
+from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, session, send_file, g
 from flask_cors import CORS
@@ -14,6 +17,52 @@ from multiprocessing import Process
 from webrtc_server import start_webrtc_server
 from functools import wraps
 from db_manage import init_db as init_db_tool
+
+# ------------- 日志配置 -------------
+LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
+
+class DualWriter:
+    """同时写入 原始stdout 和 日志文件"""
+    def __init__(self, original_stream, file_handler):
+        self.original_stream = original_stream
+        self.file_handler = file_handler
+        self.logger = logging.getLogger("print_logger_backend")
+        self.logger.addHandler(file_handler)
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False
+
+    def write(self, message):
+        self.original_stream.write(message)
+        self.original_stream.flush()
+        if message.strip():
+            record = logging.LogRecord(
+                name="print", level=logging.INFO, pathname="", lineno=0,
+                msg=message.strip(), args=(), exc_info=None
+            )
+            self.file_handler.emit(record)
+
+    def flush(self):
+        self.original_stream.flush()
+
+def setup_logging():
+    """配置日志：按天轮转，永久保留"""
+    os.makedirs(LOG_DIR, exist_ok=True)
+    
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # backend.log
+    log_file = os.path.join(LOG_DIR, "backend.log")
+    file_handler = TimedRotatingFileHandler(
+        log_file, when='midnight', interval=1, backupCount=0, encoding='utf-8'
+    )
+    file_handler.suffix = "%Y-%m-%d"
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    sys.stdout = DualWriter(sys.stdout, file_handler)
+    sys.stderr = DualWriter(sys.stderr, file_handler)
 
 # ------------- 基础配置 -------------
 app = Flask(__name__)
@@ -533,6 +582,10 @@ def reset_webrtc_state():
 if __name__ == "__main__":
     from multiprocessing import freeze_support
     freeze_support()
+    
+    # 配置日志
+    setup_logging()
+    
     # 初始化数据库
     init_db()
     # 重置推流状态
