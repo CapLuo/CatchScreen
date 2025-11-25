@@ -12,7 +12,7 @@ services:
       - HLS_ROOT=/app/hls  # 告诉 webrtc_server 从哪里读取 HLS
     volumes:
       - ./uploads:/app/uploads
-      - ./database.db:/app/database.db
+      - ./data:/app/data        # 挂载数据目录（存放 database.db）
       - ./frontend:/app/frontend
       - hls_data:/app/hls  # 读取 Nginx 生成的 HLS
     command: ["python", "backend.py"]

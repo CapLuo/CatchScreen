@@ -22,13 +22,17 @@ CORS(app, supports_credentials=True)  # 允许跨域请求
 
 UPLOAD_ROOT = os.path.join(os.path.dirname(__file__), "uploads")
 FRONTEND_ROOT = os.path.join(os.path.dirname(__file__), "frontend")
-DB_PATH = os.path.join(os.path.dirname(__file__), "database.db")
+DATA_ROOT = os.path.join(os.path.dirname(__file__), "data")
+DB_PATH = os.path.join(DATA_ROOT, "database.db")
+# HLS_ROOT 必须与 webrtc_server.py 保持一致
+HLS_ROOT = os.environ.get('HLS_ROOT', os.path.join(os.path.dirname(__file__), "hls_stream"))
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
+os.makedirs(DATA_ROOT, exist_ok=True)
+os.makedirs(HLS_ROOT, exist_ok=True)
 
 # 管理员账号（可改）
 ADMIN_USER = "admin"
 ADMIN_PASS = "123456"
-
 
 
 # ---------------- 数据库管理 ----------------

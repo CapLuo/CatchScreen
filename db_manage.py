@@ -7,7 +7,8 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "database.db")
+DATA_ROOT = os.path.join(os.path.dirname(__file__), "data")
+DB_PATH = os.path.join(DATA_ROOT, "database.db")
 
 
 def init_db():
