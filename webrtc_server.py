@@ -50,6 +50,7 @@ HLS_PREVIEW_HTML = """<!doctype html>
     <div id="statusMessage" class="status-message" style="display: none;">
       <h4 id="statusTitle">等待客户端推流...</h4>
       <p id="statusText">正在检测 HLS 流...</p>
+      <p id="debugInfo" style="font-size: 12px; color: #888; margin-top: 5px;"></p>
     </div>
   </div>
 
@@ -60,11 +61,14 @@ const fullscreenIcon = document.getElementById('fullscreenIcon');
 const statusMessage = document.getElementById('statusMessage');
 const statusTitle = document.getElementById('statusTitle');
 const statusText = document.getElementById('statusText');
+const debugInfo = document.getElementById('debugInfo');
 
 const urlParams = new URLSearchParams(location.search);
 const ip = urlParams.get('ip') || '-';
 // Nginx hls_nested=on -> /tmp/hls/{IP}/index.m3u8
 const hlsUrl = `/hls/${ip}/index.m3u8`;
+
+debugInfo.textContent = `Target: ${hlsUrl}`;
 
 let hls = null;
 let checkInterval = null;
@@ -260,6 +264,10 @@ window.addEventListener('beforeunload', () => {
   }
 });
   </script>
+</body>
+</html>"""
+
+
 def check_hls_exists(ip: str) -> bool:
     """
     检查指定 IP 的 HLS 文件是否存在
