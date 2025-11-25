@@ -63,8 +63,8 @@ const statusText = document.getElementById('statusText');
 
 const urlParams = new URLSearchParams(location.search);
 const ip = urlParams.get('ip') || '-';
-// Nginx (默认配置) 生成的是平铺文件: /tmp/hls/{IP}.m3u8
-const hlsUrl = `/hls/${ip}.m3u8`;
+// Nginx hls_nested=on -> /tmp/hls/{IP}/index.m3u8
+const hlsUrl = `/hls/${ip}/index.m3u8`;
 
 let hls = null;
 let checkInterval = null;
@@ -260,18 +260,13 @@ window.addEventListener('beforeunload', () => {
   }
 });
   </script>
-</body>
-</html>"""
-
-
-
 def check_hls_exists(ip: str) -> bool:
     """
     检查指定 IP 的 HLS 文件是否存在
     """
     safe_ip = ip.replace("/", "_")
-    # Nginx flat structure: /tmp/hls/{safe_ip}.m3u8
-    hls_path = os.path.join(HLS_ROOT, f"{safe_ip}.m3u8")
+    # Nginx nested structure: /tmp/hls/{safe_ip}/index.m3u8
+    hls_path = os.path.join(HLS_ROOT, safe_ip, "index.m3u8")
     return os.path.exists(hls_path)
 
 
@@ -281,7 +276,7 @@ def get_hls_url(ip: str) -> Optional[str]:
     """
     if check_hls_exists(ip):
         safe_ip = ip.replace("/", "_")
-        return f"/hls/{safe_ip}.m3u8"
+        return f"/hls/{safe_ip}/index.m3u8"
     return None
 
 
@@ -299,13 +294,14 @@ async def handle_preview(request: Request) -> Response:
 
 async def handle_hls_file(request: Request) -> Response:
     """
-    提供 HLS 文件访问 (Flat structure)
-    GET /hls/{filename}
+    提供 HLS 文件访问 (Nested structure)
+    GET /hls/{ip}/{filename}
     """
-    filename = request.match_info.get("filename", "")
+    ip = request.match_info.get("ip", "")
+    filename = request.match_info.get("filename", "index.m3u8")
     
-    # 直接在 HLS_ROOT 下查找文件
-    file_path = os.path.join(HLS_ROOT, filename)
+    safe_ip = ip.replace("/", "_")
+    file_path = os.path.join(HLS_ROOT, safe_ip, filename)
     
     if not os.path.exists(file_path):
         return web.Response(status=404, text="File not found")
@@ -328,28 +324,26 @@ async def handle_status(request: Request) -> Response:
     """
     import glob
     
-    # 扫描所有 HLS 流 (Flat structure)
+    # 扫描所有 HLS 流 (Nested structure)
     active_streams = []
     if os.path.exists(HLS_ROOT):
-        # 查找所有的 .m3u8 文件
-        m3u8_files = glob.glob(os.path.join(HLS_ROOT, "*.m3u8"))
-        for m3u8_path in m3u8_files:
-            filename = os.path.basename(m3u8_path)
-            # 假设文件名是 IP.m3u8 (Nginx RTMP default)
-            stream_key = os.path.splitext(filename)[0]
-            
-            # 获取最新的 .ts 文件修改时间 (Nginx creates stream_key-1.ts)
-            ts_pattern = os.path.join(HLS_ROOT, f"{stream_key}-*.ts")
-            ts_files = glob.glob(ts_pattern)
-            latest_ts_time = 0
-            if ts_files:
-                latest_ts_time = max(os.path.getmtime(f) for f in ts_files)
-                
-            active_streams.append({
-                "ip": stream_key.replace("_", "/"),
-                "has_playlist": True,
-                "latest_segment_time": latest_ts_time
-            })
+        # 遍历每个 IP 目录
+        for ip_dir in os.listdir(HLS_ROOT):
+            ip_path = os.path.join(HLS_ROOT, ip_dir)
+            if os.path.isdir(ip_path):
+                m3u8_path = os.path.join(ip_path, "index.m3u8")
+                if os.path.exists(m3u8_path):
+                    # 获取最新的 .ts 文件修改时间
+                    ts_files = glob.glob(os.path.join(ip_path, "*.ts"))
+                    latest_ts_time = 0
+                    if ts_files:
+                        latest_ts_time = max(os.path.getmtime(f) for f in ts_files)
+                    
+                    active_streams.append({
+                        "ip": ip_dir.replace("_", "/"),
+                        "has_playlist": True,
+                        "latest_segment_time": latest_ts_time
+                    })
     
     return web.json_response({
         "hls_root": HLS_ROOT,
@@ -365,8 +359,8 @@ def create_app() -> web.Application:
     # 路由
     app.router.add_get('/preview', handle_preview)
     app.router.add_get('/status', handle_status)
-    # 修改路由以匹配平铺结构
-    app.router.add_get('/hls/{filename:.*}', handle_hls_file)
+    # 修改路由以匹配嵌套结构
+    app.router.add_get('/hls/{ip}/{filename:.*}', handle_hls_file)
     
     # CORS 支持
     @web.middleware
