@@ -12,8 +12,8 @@ from aiohttp.web import Request, Response
 
 # 配置
 SERVER_PORT = int(os.environ.get('WEBRTC_PORT', '5002'))
-# HLS_ROOT defaults to a local folder if not specified, for easier local testing
-default_hls_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hls_stream")
+# HLS_ROOT defaults to Nginx hls path if not specified
+default_hls_root = "/tmp/hls"
 HLS_ROOT = os.environ.get('HLS_ROOT', default_hls_root)
 
 # HLS 播放页面 HTML 模板

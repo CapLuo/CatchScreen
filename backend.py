@@ -24,8 +24,8 @@ UPLOAD_ROOT = os.path.join(os.path.dirname(__file__), "uploads")
 FRONTEND_ROOT = os.path.join(os.path.dirname(__file__), "frontend")
 DATA_ROOT = os.path.join(os.path.dirname(__file__), "data")
 DB_PATH = os.path.join(DATA_ROOT, "database.db")
-# HLS_ROOT 必须与 webrtc_server.py 保持一致
-HLS_ROOT = os.environ.get('HLS_ROOT', os.path.join(os.path.dirname(__file__), "hls_stream"))
+# HLS_ROOT 必须与 webrtc_server.py 保持一致，且指向 Nginx 配置的真实路径
+HLS_ROOT = os.environ.get('HLS_ROOT', "/tmp/hls")
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
 os.makedirs(DATA_ROOT, exist_ok=True)
 os.makedirs(HLS_ROOT, exist_ok=True)
