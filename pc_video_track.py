@@ -225,6 +225,76 @@ def get_ffmpeg_path() -> str:
     return path
 
 
+def check_single_instance(port=40006):
+    """
+    检查是否已有实例在运行（通过绑定本地端口实现）。
+    如果端口绑定失败，说明已有实例，直接退出程序。
+    返回 socket 对象，需保持引用。
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(('127.0.0.1', port))
+        return s
+    except OSError:
+        print(f"[STARTUP] Another instance is already running (port {port} is busy). Exiting...")
+        time.sleep(2)
+        sys.exit(0)
+
+
+def create_startup_shortcut():
+    """
+    创建 Windows 开机自启动快捷方式
+    """
+    try:
+        # Windows 启动文件夹路径
+        startup_folder = os.path.join(os.getenv('APPDATA'), r'Microsoft\Windows\Start Menu\Programs\Startup')
+        shortcut_name = "CatchScreenClient.lnk"
+        shortcut_path = os.path.join(startup_folder, shortcut_name)
+
+        # 确定目标和参数
+        if getattr(sys, 'frozen', False):
+            # PyInstaller 打包后的 exe
+            target_path = sys.executable
+            arguments = "" 
+            working_dir = os.path.dirname(sys.executable)
+        else:
+            # 源码运行 python xxx.py
+            target_path = sys.executable # python.exe
+            script_path = os.path.abspath(__file__)
+            args_list = [script_path] + sys.argv[1:]
+            arguments = " ".join(f'"{a}"' if " " in a else a for a in args_list)
+            working_dir = os.path.dirname(script_path)
+
+        print(f"[STARTUP] Creating shortcut at: {shortcut_path}")
+        print(f"[STARTUP] Target: {target_path}")
+
+        # 使用 VBScript 创建快捷方式
+        vbs_content = f'''
+        Set oWS = WScript.CreateObject("WScript.Shell")
+        sLinkFile = "{shortcut_path}"
+        Set oLink = oWS.CreateShortcut(sLinkFile)
+        oLink.TargetPath = "{target_path}"
+        oLink.Arguments = "{arguments}"
+        oLink.WorkingDirectory = "{working_dir}"
+        oLink.Description = "CatchScreen Client Auto Start"
+        oLink.Save
+        '''
+        
+        vbs_file = os.path.join(working_dir, "create_shortcut.vbs")
+        with open(vbs_file, "w", encoding="ansi") as f:
+            f.write(vbs_content)
+        
+        subprocess.run(["cscript", "//Nologo", vbs_file], check=True)
+        
+        if os.path.exists(vbs_file):
+            os.remove(vbs_file)
+            
+        print("[STARTUP] Successfully added to Windows Startup.")
+        
+    except Exception as e:
+        print(f"[STARTUP] Error setting up startup: {e}")
+
+
 # -----------------------
 # 与后端交互（心跳 / 上传）
 # -----------------------
@@ -757,6 +827,9 @@ async def main_async(args):
 
 
 def main():
+    # 1. 单实例检查
+    _instance_sock = check_single_instance()
+
     setup_logging()
     
     parser = argparse.ArgumentParser(description="Screen -> RTMP/HLS Publisher")
@@ -769,6 +842,11 @@ def main():
     parser.add_argument("--segment-minutes", type=int, default=SEGMENT_MINUTES_DEFAULT, help="record segment minutes")
     parser.add_argument("--reconnect-delay", type=float, default=5.0, help="reconnect delay seconds")
     args = parser.parse_args()
+
+    # 如果是打包后的 exe，自动注册开机自启
+    if getattr(sys, 'frozen', False):
+        print("[MAIN] Running as executable, ensuring startup shortcut exists...")
+        create_startup_shortcut()
 
     try:
         asyncio.run(main_async(args))
