@@ -14,7 +14,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, session, send_file, g
 from flask_cors import CORS
 from multiprocessing import Process
-from webrtc_server import start_webrtc_server
+from preview_server import start_preview_server
 from functools import wraps
 from db_manage import init_db as init_db_tool
 
@@ -156,7 +156,7 @@ def get_config():
     
     # 从环境变量获取端口配置（支持自定义端口）
     api_port = os.environ.get('API_PORT', '5001')
-    webrtc_port = os.environ.get('WEBRTC_PORT', '5002')
+    preview_port = os.environ.get('PREVIEW_PORT', '5002')
     
     # 构建URL的函数
     def build_url(port):
@@ -181,16 +181,18 @@ def get_config():
     
     # 构建配置
     api_base = f"{build_url(api_port)}/api"
-    webrtc_base = build_url(webrtc_port)
+    preview_base = build_url(preview_port)
     uploads_base = f"{build_url(api_port)}/uploads"
     
     return jsonify({
         "apiBase": api_base,
-        "webrtcBase": webrtc_base,
+        "previewBase": preview_base, # New name
+        "webrtcBase": preview_base,  # Compatibility
         "uploadsBase": uploads_base,
         "hostname": hostname,
         "apiPort": api_port,
-        "webrtcPort": webrtc_port
+        "previewPort": preview_port, # New name
+        "webrtcPort": preview_port   # Compatibility
     })
 
 # ---------------- 登录相关 API ----------------
@@ -567,10 +569,11 @@ def frontend_index():
 
 
 
-def reset_webrtc_state():
+def reset_preview_state():
     """重置所有客户端的推流状态为关闭"""
     try:
         with sqlite3.connect(DB_PATH) as db:
+            # 这里的 webrtc_direct 是数据库字段名，保持不变以兼容
             db.execute('UPDATE folders SET webrtc_direct = 0')
             db.commit()
         print("✅ 已重置所有推流状态为关闭")
@@ -589,10 +592,10 @@ if __name__ == "__main__":
     # 初始化数据库
     init_db()
     # 重置推流状态
-    reset_webrtc_state()
+    reset_preview_state()
     
     # 启动 HLS 预览服务子进程
-    p = Process(target=start_webrtc_server, daemon=True)
+    p = Process(target=start_preview_server, daemon=True)
     p.start()
     
     print("✅ HLS 预览服务已启动 (port 5002)")

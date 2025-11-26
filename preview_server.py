@@ -23,7 +23,7 @@ class DualWriter:
     def __init__(self, original_stream, file_handler):
         self.original_stream = original_stream
         self.file_handler = file_handler
-        self.logger = logging.getLogger("print_logger_webrtc")
+        self.logger = logging.getLogger("print_logger_preview")
         self.logger.addHandler(file_handler)
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = False
@@ -49,7 +49,7 @@ def setup_logging():
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     
-    log_file = os.path.join(LOG_DIR, "webrtc.log")
+    log_file = os.path.join(LOG_DIR, "preview.log")
     file_handler = TimedRotatingFileHandler(
         log_file, when='midnight', interval=1, backupCount=0, encoding='utf-8'
     )
@@ -61,7 +61,7 @@ def setup_logging():
     sys.stderr = DualWriter(sys.stderr, file_handler)
 
 # 配置
-SERVER_PORT = int(os.environ.get('WEBRTC_PORT', '5002'))
+SERVER_PORT = int(os.environ.get('PREVIEW_PORT', '5002'))
 # HLS_ROOT defaults to Nginx hls path if not specified
 default_hls_root = "/tmp/hls"
 HLS_ROOT = os.environ.get('HLS_ROOT', default_hls_root)
@@ -443,7 +443,7 @@ async def init_app() -> web.Application:
     return create_app()
 
 
-def start_webrtc_server() -> None:
+def start_preview_server() -> None:
     """
     启动 HLS 预览服务器（保持函数名不变，兼容 backend.py）
     """
