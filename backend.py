@@ -476,7 +476,7 @@ def heartbeat(ip):
         if cursor.fetchone() is None:
             db.execute(
                 'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct) VALUES (?, ?, ?, ?)',
-                (ip, "", 1, 0)
+                (ip, "", 0, 0)
             )
         
         # 更新 folders.updated_at（用于在线状态判断）
