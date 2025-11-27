@@ -280,7 +280,7 @@ def list_folders():
         if updated_at:
             try:
                 upd_dt = datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S")
-                online = (datetime.utcnow() - upd_dt).total_seconds() <= 5 * 60
+                online = (datetime.utcnow() - upd_dt).total_seconds() <= 70
             except Exception:
                 online = False
 
@@ -363,7 +363,7 @@ def get_folder_detail(ip):
     if updated_at:
         try:
             upd_dt = datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S")
-            online = (datetime.utcnow() - upd_dt).total_seconds() <= 5 * 60
+            online = (datetime.utcnow() - upd_dt).total_seconds() <= 70
         except Exception:
             online = False
     
