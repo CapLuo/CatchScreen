@@ -24,6 +24,7 @@ import threading
 import time
 import datetime
 import shutil
+import uuid
 from typing import Optional, Tuple
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -209,6 +210,37 @@ def get_ip_address() -> str:
         return "unknown"
 
 
+def get_device_id() -> str:
+    """获取或生成持久化的设备 UUID"""
+    id_file = "device_id.txt"
+    # 确定存储目录（兼容打包环境）
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+    
+    path = os.path.join(base_dir, id_file)
+    
+    # 尝试读取现有 ID
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                content = f.read().strip()
+                if content:
+                    return content
+        except:
+            pass
+            
+    # 生成新 ID 并保存
+    new_id = str(uuid.uuid4())
+    try:
+        with open(path, "w") as f:
+            f.write(new_id)
+    except Exception as e:
+        print(f"[CONFIG] Failed to save device_id: {e}")
+        
+    return new_id
+
+
 def get_ffmpeg_path() -> str:
     """
     获取 ffmpeg 可执行文件路径。
@@ -306,7 +338,9 @@ def start_heartbeat_thread(server_url: str):
             try:
                 # 直接调用 API 获取最新状态，而不是通过 get_client_state (因为它有 fallback)
                 ip = get_ip_address()
-                url = server_url.rstrip("/") + "/api/heartbeat/" + ip
+                device_id = get_device_id()
+                # 添加 device_id 参数
+                url = f"{server_url.rstrip('/')}/api/heartbeat/{ip}?device_id={device_id}"
                 
                 try:
                     resp = requests.get(url, timeout=5)

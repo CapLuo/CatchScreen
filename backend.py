@@ -470,16 +470,34 @@ def heartbeat(ip):
     """心跳：更新 folders.updated_at 和 last_upload_at（更新 videos 表中该 IP 的最后一条记录）。
     无需登录。客户端可周期性调用（例如每 60 秒）。
     """
-    print(f"[HEARTBEAT] {ip} 心跳")
+    device_id = request.args.get("device_id")
+    print(f"[HEARTBEAT] {ip} 心跳 (device_id={device_id})")
     db = get_db()
     try:
         # 确保文件夹记录存在
-        cursor = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,))
-        if cursor.fetchone() is None:
+        cursor = db.execute('SELECT * FROM folders WHERE ip = ?', (ip,))
+        row = cursor.fetchone()
+        
+        if row is None:
+            # 新 IP：尝试从 device_id 迁移备注
+            remark = ""
+            if device_id:
+                old = db.execute('SELECT remark FROM folders WHERE device_id = ? ORDER BY updated_at DESC LIMIT 1', (device_id,)).fetchone()
+                if old: 
+                    remark = old['remark']
+                    print(f"[MIGRATE] Device {device_id} IP changed -> {ip}, migrated remark: {remark}")
+            
             db.execute(
-                'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct) VALUES (?, ?, ?, ?)',
-                (ip, "", 0, 0)
+                'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct, device_id) VALUES (?, ?, ?, ?, ?)',
+                (ip, remark, 0, 0, device_id)
             )
+        else:
+            # 已存在：更新 device_id
+            if device_id:
+                # 绑定到当前 IP
+                db.execute('UPDATE folders SET device_id = ? WHERE ip = ?', (device_id, ip))
+                # 清理该设备旧 IP 的绑定（防止同一 device_id 对应多个 IP）
+                db.execute('UPDATE folders SET device_id = NULL WHERE device_id = ? AND ip != ?', (device_id, ip))
         
         # 更新 folders.updated_at（用于在线状态判断）
         db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (ip,))

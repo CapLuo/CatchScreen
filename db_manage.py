@@ -57,6 +57,8 @@ def init_db():
     ensure_column('folders', 'upload_enabled', 'INTEGER DEFAULT 1')
     # 是否直连 WebRTC：0/1，默认 0（关闭）
     ensure_column('folders', 'webrtc_direct', 'INTEGER DEFAULT 0')
+    # 设备UUID：用于解决 IP 变化问题
+    ensure_column('folders', 'device_id', 'TEXT')
 
     db.commit()
     db.close()
