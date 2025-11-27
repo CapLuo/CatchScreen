@@ -9,7 +9,7 @@
 - **后端**: Flask RESTful API 服务 + SQLite 数据库
 - **前端**: 纯 HTML + JavaScript（Bootstrap 5.3）
 - **数据库**: SQLite 轻量级数据库
-- **功能**: 管理员登录、按IP自动建文件夹、视频上传、在线播放等
+- **功能**: 管理员登录、按IP自动建文件夹、视频上传、HLS 实时预览等
 
 ## 🚀 快速开始
 
@@ -40,13 +40,13 @@ python backend.py
 
 后端服务将在 `http://127.0.0.1:5001` 启动，提供 REST API 接口。
 
-同时会自动启动 WebRTC 服务（端口 5002）用于直播点看功能。
+同时会自动启动 HLS 预览服务（端口 5002）用于直播点看功能。
 
 #### 3. 访问前端
 
 在浏览器中打开：
 
-- **登录页面**: `http://127.0.0.1:5000/frontend/login.html`
+- **登录页面**: `http://127.0.0.1:5001/frontend/login.html`
 
 ### 4. 默认账号
 
@@ -57,21 +57,34 @@ python backend.py
 
 ```
 Screen/
-├── backend.py              # 后端 API 服务（SQLite 数据库）
-├── webrtc_server.py        # WebRTC 服务器
+├── backend.py              # 后端 API 服务（Flask + SQLite）
+├── preview_server.py       # HLS 预览服务器 (aiohttp)
+├── pc_video_track.py       # PC 客户端推流程序
 ├── db_manage.py            # 数据库管理工具
-├── main.py                 # 原版（未分离版本）
 ├── requirements.txt        # Python 依赖
 ├── database.db             # SQLite 数据库（自动创建）
-├── README.md              # 说明文档
-├── uploads/               # 视频存储目录（自动创建）
+├── README.md               # 说明文档
+├── uploads/                # 视频存储目录（自动创建）
 │   └── IP地址/             # 按IP自动分文件夹
 │       └── 视频文件.mp4
-└── frontend/              # 前端文件
-    ├── login.html         # 登录页面
-    ├── index.html         # 文件夹列表页
-    └── folder.html        # 视频详情页
+└── frontend/               # 前端文件
+    ├── login.html          # 登录页面
+    ├── index.html          # 文件夹列表页
+    └── folder.html         # 视频详情页
 ```
+
+## 📺 客户端推流 (HLS)
+
+使用 `pc_video_track.py` 进行屏幕推流：
+
+```bash
+# 依赖安装
+pip install mss numpy opencv-python pillow requests
+
+# 启动推流
+python pc_video_track.py --file_server http://127.0.0.1:5001 --mode hls --hls_dir ./hls_output --fps 15
+```
+*(注：需安装 FFmpeg 并配置环境变量)*
 
 ## 🔧 API 接口说明
 
@@ -118,7 +131,7 @@ docker compose up -d --build
 2) 访问
 
 - 后端接口与前端页面: http://127.0.0.1:5001/frontend/login.html
-- WebRTC 预览页: http://127.0.0.1:5002/preview?ip=YOUR_IP
+- HLS 预览页: http://127.0.0.1:5002/preview?ip=YOUR_IP
 
 3) 数据持久化
 
@@ -137,14 +150,14 @@ docker compose down
 ```bash
 docker build -t catchscreen:latest .
 docker run -d --name catchscreen \
-  -p 5000:5000 -p 5002:5002 \
+  -p 5001:5001 -p 5002:5002 \
   -v $PWD/uploads:/app/uploads \
   -v $PWD/database.db:/app/database.db \
   -v $PWD/frontend:/app/frontend \
   catchscreen:latest
 ```
 
-> 注意：`webrtc_server.py` 端口为 5002，如需自定义端口请同步修改 `docker-compose.yml` 的端口映射。
+> 注意：`preview_server.py` 端口为 5002，如需自定义端口请同步修改 `docker-compose.yml` 的端口映射。
 
 
 ### 管理工具
