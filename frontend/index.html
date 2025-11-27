@@ -43,6 +43,9 @@
     <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
       <h4 class="mb-0"><i class="bi bi-folder-check"></i> 视频文件夹</h4>
       <div class="d-flex gap-2">
+        <select id="groupFilter" class="form-select" style="width: 160px; cursor: pointer;" onchange="applyFilters()">
+          <option value="">所有分组</option>
+        </select>
         <button id="refreshBtn" class="btn btn-primary" onclick="refreshFolders()">
           <i class="bi bi-arrow-clockwise"></i> 刷新
         </button>
@@ -79,8 +82,13 @@
             <label class="form-label">IP</label>
             <input id="remarkIp" type="text" class="form-control" disabled>
           </div>
+          <div class="mb-3">
+            <label class="form-label">分组</label>
+            <input id="groupInput" type="text" class="form-control" list="groupOptions" placeholder="选择或输入分组（可选）">
+            <datalist id="groupOptions"></datalist>
+          </div>
           <div class="mb-2">
-            <label class="form-label">备注</label>
+            <label class="form-label">备注名</label>
             <input id="remarkInput" type="text" class="form-control" placeholder="输入备注...">
           </div>
         </div>
@@ -174,7 +182,10 @@
         const response = await fetch(`${API_BASE}/folders`, { credentials: 'include' });
         const result = await response.json();
         allFolders = result.folders || [];
-        renderFolders(allFolders);
+        
+        updateGroupFilterOptions(allFolders);
+        applyFilters();
+        
       } catch (error) {
         document.getElementById('foldersList').innerHTML = `
           <div class="col-12">
@@ -189,6 +200,64 @@
       }
     }
 
+    function updateGroupFilterOptions(folders) {
+      const select = document.getElementById('groupFilter');
+      const currentVal = select.value;
+      const groups = new Set();
+      folders.forEach(f => {
+        const { group } = parseRemark(f.remark);
+        groups.add(group || '默认分组');
+      });
+      
+      let html = '<option value="">所有分组</option>';
+      Array.from(groups).sort((a, b) => {
+         if (a === '默认分组') return 1;
+         if (b === '默认分组') return -1;
+         return a.localeCompare(b, 'zh-CN');
+      }).forEach(g => {
+        html += `<option value="${g}">${g}</option>`;
+      });
+      
+      select.innerHTML = html;
+      // 如果之前的选项还在，保持选中，否则重置
+      if (select.querySelector(`option[value="${currentVal}"]`)) {
+        select.value = currentVal;
+      }
+    }
+
+    function applyFilters() {
+      const query = document.getElementById('searchInput').value.trim().toLowerCase();
+      const groupFilter = document.getElementById('groupFilter').value;
+      
+      const filtered = allFolders.filter(f => {
+        // 分组过滤
+        if (groupFilter) {
+           const { group } = parseRemark(f.remark);
+           const gName = group || '默认分组';
+           if (gName !== groupFilter) return false;
+        }
+        
+        // 搜索过滤
+        if (query) {
+          const ip = (f.ip || '').toLowerCase();
+          const remark = (f.remark || '').toLowerCase();
+          return ip.includes(query) || remark.includes(query);
+        }
+        return true;
+      });
+      
+      renderFolders(filtered);
+    }
+
+    function parseRemark(rawRemark) {
+      if (!rawRemark || rawRemark === 'null') return { group: '', name: '' };
+      const idx = rawRemark.indexOf('_');
+      if (idx > 0) {
+        return { group: rawRemark.substring(0, idx), name: rawRemark.substring(idx + 1) };
+      }
+      return { group: '', name: rawRemark };
+    }
+
     function renderFolders(folders) {
       const container = document.getElementById('foldersList');
       if (!folders.length) {
@@ -200,7 +269,51 @@
         return;
       }
 
-      container.innerHTML = folders.map(folder => `
+      // 分组处理
+      const groups = {};
+      const DEFAULT_GROUP = '默认分组';
+      
+      folders.forEach(f => {
+        const { group, name } = parseRemark(f.remark);
+        f._displayName = name; // 临时字段用于显示
+        f._groupName = group;
+        const gKey = group || DEFAULT_GROUP;
+        if (!groups[gKey]) groups[gKey] = [];
+        groups[gKey].push(f);
+      });
+
+      // 更新 datalist
+      const groupNames = Object.keys(groups).filter(g => g !== DEFAULT_GROUP).sort();
+      const datalist = document.getElementById('groupOptions');
+      if (datalist) {
+        datalist.innerHTML = groupNames.map(g => `<option value="${g}">`).join('');
+      }
+
+      // 排序分组：默认分组放最后
+      const sortedKeys = Object.keys(groups).sort((a, b) => {
+        if (a === DEFAULT_GROUP) return 1;
+        if (b === DEFAULT_GROUP) return -1;
+        return a.localeCompare(b, 'zh-CN');
+      });
+
+      let html = '';
+      const showHeaders = sortedKeys.length > 1 || sortedKeys[0] !== DEFAULT_GROUP;
+
+      sortedKeys.forEach(gName => {
+        const list = groups[gName];
+        const onlineCount = list.filter(f => f.online).length;
+
+        if (showHeaders) {
+          html += `
+            <div class="col-12 mt-4 mb-1">
+              <div class="d-flex align-items-center border-bottom pb-2">
+                <h5 class="mb-0 text-primary"><i class="bi bi-people me-2"></i>${gName}</h5>
+                <span class="ms-3 badge bg-light text-secondary border">${onlineCount} / ${list.length} 在线</span>
+              </div>
+            </div>`;
+        }
+
+        html += list.map(folder => `
         <div class="col-12 col-sm-6 col-lg-4 col-xl-3">
           <div class="folder-card card shadow-sm h-100" onclick="openPreview('${folder.ip}')" style="cursor: pointer;">
             <div class="card-body py-3 d-flex flex-column">
@@ -238,7 +351,7 @@
                 </div>
                 <div class="d-flex align-items-center gap-2 mt-2" onclick="event.stopPropagation();">
                   <div class="text-truncate flex-grow-1" style="min-width: 0;">
-                    ${folder.remark ? `<span class="text-info small" title="${folder.remark}">${folder.remark}</span>` : '<span class="text-muted small">无备注</span>'}
+                    ${folder._displayName ? `<span class="text-info small" title="${folder.remark}">${folder._displayName}</span>` : '<span class="text-muted small">无备注</span>'}
                   </div>
                   <button class="btn btn-sm btn-outline-primary flex-shrink-0" onclick="event.stopPropagation(); openRemark('${folder.ip}', '${(folder.remark||'').replace(/'/g, "&#39;")}')">
                     <i class="bi bi-pencil"></i>
@@ -251,14 +364,48 @@
             </div>
           </div>
         </div>`).join('');
+      });
 
+      container.innerHTML = html;
     }
 
     function openRemark(ip, remark) {
       document.getElementById('remarkIp').value = ip;
-      document.getElementById('remarkInput').value = remark === 'null' ? '' : remark;
+      const { group, name } = parseRemark(remark);
+      document.getElementById('groupInput').value = group;
+      document.getElementById('remarkInput').value = name;
       remarkModal.show();
     }
+
+    // ... (toggleUploadEnabled unchanged) ...
+
+    document.getElementById('saveRemarkBtn').addEventListener('click', async () => {
+      const ip = document.getElementById('remarkIp').value;
+      const group = document.getElementById('groupInput').value.trim();
+      const name = document.getElementById('remarkInput').value.trim();
+      
+      let finalRemark = name;
+      if (group && name) {
+        finalRemark = `${group}_${name}`;
+      } else if (group) {
+        // 只有分组没有名字？通常不允许，或者当作名字
+        finalRemark = `${group}_`; 
+      }
+      
+      try {
+        const res = await fetch(`${API_BASE}/folders/${encodeURIComponent(ip)}/remark`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remark: finalRemark })
+        });
+        if (!res.ok) throw new Error('保存失败');
+        remarkModal.hide();
+        refreshFolders();
+      } catch (e) {
+        showError(e.message || '保存失败');
+      }
+    });
 
     // 切换上传开关状态
     async function toggleUploadEnabled(ip, enabled) {
@@ -325,52 +472,12 @@
       toast.show();
     }
 
-    document.getElementById('saveRemarkBtn').addEventListener('click', async () => {
-      const ip = document.getElementById('remarkIp').value;
-      const remark = document.getElementById('remarkInput').value.trim();
-      try {
-        const res = await fetch(`${API_BASE}/folders/${encodeURIComponent(ip)}/remark`, {
-          method: 'PATCH',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ remark })
-        });
-        if (!res.ok) throw new Error('保存失败');
-        remarkModal.hide();
-        refreshFolders();
-      } catch (e) {
-        showError(e.message || '保存失败');
-      }
-    });
 
     // 搜索功能：支持 IP 和备注名搜索
     let searchTimeout = null;
     document.getElementById('searchInput').addEventListener('input', (e) => {
-      const query = e.target.value.trim();
-      
-      // 清除之前的定时器
-      if (searchTimeout) {
-        clearTimeout(searchTimeout);
-      }
-      
-      // 如果搜索关键词为空，显示所有文件夹
-      if (!query) {
-        renderFolders(allFolders);
-        return;
-      }
-      
-      // 防抖：300ms 后执行搜索
-      searchTimeout = setTimeout(async () => {
-        const q = query.toLowerCase();
-        // 客户端搜索：支持 IP 和备注的模糊匹配
-        const filtered = allFolders.filter(f => {
-          const ip = (f.ip || '').toLowerCase();
-          const remark = (f.remark || '').toLowerCase();
-          // 支持 IP 或备注的模糊匹配
-          return ip.includes(q) || remark.includes(q);
-        });
-        renderFolders(filtered);
-      }, 300);
+      if (searchTimeout) clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(applyFilters, 300);
     });
 
     function showError(msg) {
