@@ -202,42 +202,50 @@
 
       container.innerHTML = folders.map(folder => `
         <div class="col-12 col-sm-6 col-lg-4 col-xl-3">
-          <div class="folder-card card shadow-sm" onclick="openPreview('${folder.ip}')" style="cursor: pointer;">
-            <div class="card-body py-3">
-              <div class="d-flex align-items-start justify-content-between">
+          <div class="folder-card card shadow-sm h-100" onclick="openPreview('${folder.ip}')" style="cursor: pointer;">
+            <div class="card-body py-3 d-flex flex-column">
+              <div class="d-flex align-items-start justify-content-between mb-2">
                 <div class="text-end w-100">
                   <div class="d-flex align-items-center justify-content-between">
                     <div class="d-flex align-items-center gap-2">
                       <i class="bi bi-folder folder-icon"></i>
-                      <div class="fw-semibold">${folder.ip}</div>
+                      <div class="fw-semibold text-truncate" style="max-width: 140px;" title="${folder.ip}">${folder.ip}</div>
                     </div>
                     <div>
                       <span class="badge ${folder.online ? 'bg-success' : 'bg-secondary'}">${folder.online ? '在线' : '离线'}</span>
                     </div>
                   </div>
-                  <div class="text-muted small mt-1"><i class="bi bi-camera-video"></i> ${folder.video_count} 个视频</div>
-                  ${folder.last_upload_at ? `<div class="text-muted small">最近上传：${folder.last_upload_at}</div>` : ''}
-                  <div class="d-flex align-items-center gap-2 mt-2 mb-2" onclick="event.stopPropagation();">
-                    <div class="form-check form-switch upload-switch">
-                      <input class="form-check-input" type="checkbox" id="uploadEnabled_${folder.ip.replace(/\./g, '_')}" 
-                             ${folder.upload_enabled ? 'checked' : ''} 
-                             onchange="toggleUploadEnabled('${folder.ip}', this.checked)"
-                             style="cursor: pointer;">
-                      <label class="form-check-label small" for="uploadEnabled_${folder.ip.replace(/\./g, '_')}" style="cursor: pointer;">
-                        <i class="bi ${folder.upload_enabled ? 'bi-cloud-upload' : 'bi-cloud-slash'}"></i> 
-                        <span>${folder.upload_enabled ? '允许上传' : '禁止上传'}</span>
-                      </label>
-                    </div>
+                </div>
+              </div>
+              
+              <div class="text-muted small"><i class="bi bi-camera-video"></i> ${folder.video_count} 个视频</div>
+              <div class="text-muted small" style="min-height: 21px;">
+                ${folder.last_upload_at ? `最近上传：${folder.last_upload_at}` : ''}
+              </div>
+
+              <div class="mt-auto">
+                <div class="d-flex align-items-center gap-2 mt-2 mb-2" onclick="event.stopPropagation();">
+                  <div class="form-check form-switch upload-switch">
+                    <input class="form-check-input" type="checkbox" id="uploadEnabled_${folder.ip.replace(/\./g, '_')}" 
+                           ${folder.upload_enabled ? 'checked' : ''} 
+                           onchange="toggleUploadEnabled('${folder.ip}', this.checked)"
+                           style="cursor: pointer;">
+                    <label class="form-check-label small" for="uploadEnabled_${folder.ip.replace(/\./g, '_')}" style="cursor: pointer;">
+                      <i class="bi ${folder.upload_enabled ? 'bi-cloud-upload' : 'bi-cloud-slash'}"></i> 
+                      <span>${folder.upload_enabled ? '允许上传' : '禁止上传'}</span>
+                    </label>
                   </div>
-                  <div class="d-flex align-items-center gap-2 mt-2" onclick="event.stopPropagation();">
-                    ${folder.remark ? `<span class="text-info small">${folder.remark}</span>` : '<span class="text-muted small">无备注</span>'}
-                    <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); openRemark('${folder.ip}', '${(folder.remark||'').replace(/'/g, "&#39;")}')">
-                      <i class="bi bi-pencil"></i> 编辑备注
-                    </button>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); viewFolder('${folder.ip}')">
-                      <i class="bi bi-collection-play"></i> 查看视频
-                    </button>
+                </div>
+                <div class="d-flex align-items-center gap-2 mt-2" onclick="event.stopPropagation();">
+                  <div class="text-truncate flex-grow-1" style="max-width: 100px;">
+                    ${folder.remark ? `<span class="text-info small" title="${folder.remark}">${folder.remark}</span>` : '<span class="text-muted small">无备注</span>'}
                   </div>
+                  <button class="btn btn-sm btn-outline-primary flex-shrink-0" onclick="event.stopPropagation(); openRemark('${folder.ip}', '${(folder.remark||'').replace(/'/g, "&#39;")}')">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                  <button class="btn btn-sm btn-outline-secondary flex-shrink-0" onclick="event.stopPropagation(); viewFolder('${folder.ip}')">
+                    <i class="bi bi-collection-play"></i>
+                  </button>
                 </div>
               </div>
             </div>
