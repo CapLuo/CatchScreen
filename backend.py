@@ -468,36 +468,78 @@ def upload_video(ip):
 @app.route("/api/heartbeat/<ip>", methods=["GET"])
 def heartbeat(ip):
     """心跳：更新 folders.updated_at 和 last_upload_at（更新 videos 表中该 IP 的最后一条记录）。
-    无需登录。客户端可周期性调用（例如每 60 秒）。
+    支持设备 IP 变更检测与自动迁移。
     """
     device_id = request.args.get("device_id")
-    print(f"[HEARTBEAT] {ip} 心跳 (device_id={device_id})")
+    # print(f"[HEARTBEAT] {ip} 心跳 (device_id={device_id})")
     db = get_db()
     try:
-        # 确保文件夹记录存在
+        # --- 1. 检测 IP 变更与数据迁移 ---
+        if device_id:
+            # 查找该设备之前绑定的其他 IP
+            old_recs = db.execute('SELECT ip, remark, upload_enabled FROM folders WHERE device_id = ? AND ip != ?', (device_id, ip)).fetchall()
+            
+            for old_rec in old_recs:
+                old_ip = old_rec['ip']
+                print(f"[MIGRATE] 设备 {device_id} IP 变更: {old_ip} -> {ip}")
+                
+                # 1.1 确保新 IP 记录存在
+                curr = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,)).fetchone()
+                if not curr:
+                    # 继承旧配置创建新记录
+                    print(f"[MIGRATE] 创建新记录 {ip}，继承备注: {old_rec['remark']}")
+                    db.execute(
+                        'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct, device_id) VALUES (?, ?, ?, ?, ?)',
+                        (ip, old_rec['remark'], old_rec['upload_enabled'], 0, device_id)
+                    )
+                else:
+                    # 更新新记录的绑定
+                    db.execute('UPDATE folders SET device_id = ? WHERE ip = ?', (device_id, ip))
+
+                # 1.2 迁移视频记录
+                db.execute('UPDATE videos SET ip = ? WHERE ip = ?', (ip, old_ip))
+                
+                # 1.3 迁移物理文件
+                try:
+                    old_path = os.path.join(UPLOAD_FOLDER, old_ip)
+                    new_path = os.path.join(UPLOAD_FOLDER, ip)
+                    if os.path.exists(old_path):
+                        if not os.path.exists(new_path):
+                            os.rename(old_path, new_path)
+                            print(f"[MIGRATE] 文件夹重命名成功")
+                        else:
+                            # 合并模式
+                            print(f"[MIGRATE] 目标文件夹已存在，开始合并文件...")
+                            for item in os.listdir(old_path):
+                                s = os.path.join(old_path, item)
+                                d = os.path.join(new_path, item)
+                                if not os.path.exists(d):
+                                    shutil.move(s, d)
+                            try:
+                                os.rmdir(old_path) # 尝试删除空文件夹
+                            except: pass
+                except Exception as e:
+                    print(f"[MIGRATE] 文件系统操作失败: {e}")
+
+                # 1.4 删除旧记录
+                db.execute('DELETE FROM folders WHERE ip = ?', (old_ip,))
+                print(f"[MIGRATE] 旧记录 {old_ip} 已删除")
+
+        # --- 2. 常规心跳更新 ---
+        # 再次确保记录存在（防止没有 device_id 的旧客户端或者是全新设备）
         cursor = db.execute('SELECT * FROM folders WHERE ip = ?', (ip,))
         row = cursor.fetchone()
         
         if row is None:
-            # 新 IP：尝试从 device_id 迁移备注
-            remark = ""
-            if device_id:
-                old = db.execute('SELECT remark FROM folders WHERE device_id = ? ORDER BY updated_at DESC LIMIT 1', (device_id,)).fetchone()
-                if old: 
-                    remark = old['remark']
-                    print(f"[MIGRATE] Device {device_id} IP changed -> {ip}, migrated remark: {remark}")
-            
+            # 新设备（无历史迁移）
             db.execute(
                 'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct, device_id) VALUES (?, ?, ?, ?, ?)',
-                (ip, remark, 0, 0, device_id)
+                (ip, "", 0, 0, device_id)
             )
         else:
-            # 已存在：更新 device_id
+            # 确保 device_id 绑定正确
             if device_id:
-                # 绑定到当前 IP
                 db.execute('UPDATE folders SET device_id = ? WHERE ip = ?', (device_id, ip))
-                # 清理该设备旧 IP 的绑定（防止同一 device_id 对应多个 IP）
-                db.execute('UPDATE folders SET device_id = NULL WHERE device_id = ? AND ip != ?', (device_id, ip))
         
         # 更新 folders.updated_at（用于在线状态判断）
         db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (ip,))
@@ -518,6 +560,7 @@ def heartbeat(ip):
         db.commit()
     except Exception as e:
         print(f"数据库记录失败: {e}")
+        db.rollback()
     
     # 返回当前状态
     row = db.execute('SELECT updated_at, upload_enabled, webrtc_direct FROM folders WHERE ip = ?', (ip,)).fetchone()
