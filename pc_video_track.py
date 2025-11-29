@@ -23,7 +23,6 @@ import sys
 import threading
 import time
 import datetime
-import shutil
 import uuid
 from typing import Optional, Tuple
 import logging
@@ -194,20 +193,33 @@ class FileCleanupManager:
             except Exception as e:
                 print(f"[CLEANUP] error checking {fname}: {e}")
 
+from urllib.parse import urlparse
+
 # -----------------------
 # 工具函数
 # -----------------------
-def get_ip_address() -> str:
-    """获取主机 IPv4 地址（用于生成唯一的流 key）"""
+def get_ip_address(target_url: str = "http://8.8.8.8") -> str:
+    """
+    获取本机 IP 地址。
+    原理：尝试连接目标服务器，由操作系统路由表决定使用哪个本地接口 IP。
+    """
     try:
+        # 解析 host
+        parsed = urlparse(target_url)
+        host = parsed.hostname
+        if not host:
+            host = "8.8.8.8"
+            
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # 连接一个公共地址，不会真的发送数据
-        s.connect(("8.8.8.8", 80))
+        # 连接目标地址，不会真的发送数据
+        port = parsed.port if parsed.port else 80
+        s.connect((host, port))
         ip = s.getsockname()[0]
         s.close()
         return ip
-    except Exception:
-        return "unknown"
+    except Exception as e:
+        # print(f"[NET] get_ip_address failed: {e}")
+        return "127.0.0.1"
 
 
 def get_device_id() -> str:
@@ -324,7 +336,7 @@ def create_startup_shortcut():
         print("[STARTUP] Successfully added to Windows Startup.")
         
     except Exception as e:
-        print(f"[STARTUP] Error setting up startup: {e}")
+        print(f"[STARTUP] Error settserver_urling up startup: {e}")
 
 
 # -----------------------
@@ -336,12 +348,14 @@ def start_heartbeat_thread(server_url: str):
         print(f"[HEARTBEAT] thread started, target: {server_url}")
         while True:
             try:
-                # 直接调用 API 获取最新状态，而不是通过 get_client_state (因为它有 fallback)
-                ip = get_ip_address()
+                # 获取 IP 仅作为信息上报，不作为核心标识
+                ip = get_ip_address(server_url)
                 device_id = get_device_id()
-                # 添加 device_id 参数
-                url = f"{server_url.rstrip('/')}/api/heartbeat/{ip}?device_id={device_id}"
                 
+                # 使用 device_id 作为路径标识 (假设后端 API 已调整支持 /api/heartbeat/{device_id})
+                # 同时将 ip 作为参数传递
+                url = f"{server_url.rstrip('/')}/api/heartbeat/{device_id}?ip={ip}"
+                print(url)
                 try:
                     resp = requests.get(url, timeout=5)
                     if resp.status_code == 200:
@@ -351,7 +365,7 @@ def start_heartbeat_thread(server_url: str):
                         webrtc_direct = bool(j.get("webrtc_direct", False))
                         
                         # 详细日志
-                        print(f"[HEARTBEAT] {ip} -> upload={upload_enabled}, direct={webrtc_direct}")
+                        print(f"[HEARTBEAT] {device_id} (ip={ip}) -> upload={upload_enabled}, direct={webrtc_direct}")
                         
                         # 状态变更日志
                         if upload_enabled != CLIENT_CONFIG["upload_enabled"]:
@@ -375,20 +389,14 @@ def start_heartbeat_thread(server_url: str):
     t.start()
 
 
-def get_client_state(server_url: str) -> Tuple[bool, bool]:
-    """
-    查询后端是否允许上传与直接推流。
-    (保留此函数作为手动调用的接口，虽然现在主要靠心跳线程更新全局配置)
-    """
-    return CLIENT_CONFIG["upload_enabled"], CLIENT_CONFIG["webrtc_direct"]
-
-
 def upload_to_server(server_url: str, filepath: str) -> bool:
     """
     上传文件到后端（POST multipart/form-data）
     """
-    ip = get_ip_address()
-    url = server_url.rstrip("/") + "/api/upload/" + ip
+    device_id = get_device_id()
+    ip = get_ip_address(server_url)
+    # 使用 device_id 作为路径标识，ip 作为参数
+    url = f"{server_url.rstrip('/')}/api/upload/{device_id}?ip={ip}"
     for _ in range(3):
         try:
             with open(filepath, "rb") as f:
@@ -632,7 +640,8 @@ class FFmpegPublisher:
         if self.width % 2 != 0: self.width -= 1
         if self.height % 2 != 0: self.height -= 1
         
-        self.client_ip = get_ip_address()
+        # 使用 device_id 作为唯一标识，不再依赖易变的 IP
+        self.device_id = get_device_id()
         self._stop = False
         self._process: Optional[subprocess.Popen] = None
         
@@ -748,9 +757,9 @@ class FFmpegRTMPPublisher(FFmpegPublisher):
         self.rtmp_server = rtmp_server.rstrip("/")
         
         if self.rtmp_server.startswith("rtmp://") or self.rtmp_server.startswith("rtmps://"):
-            self.rtmp_url = f"{self.rtmp_server}/live/{self.client_ip}"
+            self.rtmp_url = f"{self.rtmp_server}/live/{self.device_id}"
         else:
-            self.rtmp_url = f"rtmp://{self.rtmp_server}/live/{self.client_ip}"
+            self.rtmp_url = f"rtmp://{self.rtmp_server}/live/{self.device_id}"
 
     def _build_cmd(self):
         ffmpeg = get_ffmpeg_path()
@@ -782,8 +791,9 @@ class FFmpegHLSPublisher(FFmpegPublisher):
     def __init__(self, file_server: str, hls_dir: str, **kwargs):
         super().__init__(file_server, **kwargs)
         self.hls_dir = hls_dir
-        safe_ip = self.client_ip.replace("/", "_")
-        self.output_dir = os.path.join(self.hls_dir, safe_ip)
+        # 使用 device_id 作为目录名
+        safe_id = self.device_id.replace("/", "_")
+        self.output_dir = os.path.join(self.hls_dir, safe_id)
         os.makedirs(self.output_dir, exist_ok=True)
         self.playlist_file = os.path.join(self.output_dir, "index.m3u8")
         

@@ -427,10 +427,23 @@ def serve_video(ip, filename):
     return send_from_directory(path, filename, mimetype="video/mp4")
 
 
-@app.route("/api/upload/<ip>", methods=["POST"])
-def upload_video(ip):
-    """上传视频（不需登录，文件名为时间）"""
-    folder = folder_path(ip)
+@app.route("/api/upload/<identifier>", methods=["POST"])
+def upload_video(identifier):
+    """上传视频（不需登录，文件名为时间）
+    identifier: 可以是 device_id (新客户端) 或 ip (旧客户端)
+    """
+    # 尝试从 query param 获取真实 IP (新客户端会传 ?ip=x.x.x.x)
+    client_ip = request.args.get("ip")
+    
+    # 如果没有传 query ip，且 identifier 看起来像 IP，则使用 identifier
+    if not client_ip and identifier.count('.') == 3:
+        client_ip = identifier
+    
+    # 如果还是没有 IP，则回退到 request.remote_addr
+    if not client_ip:
+        client_ip = request.remote_addr
+
+    folder = folder_path(client_ip)
     if "file" not in request.files:
         return jsonify({"error": "no file"}), 400
     
@@ -453,7 +466,7 @@ def upload_video(ip):
         file_size = os.path.getsize(save_path)
         db.execute(
             'INSERT INTO videos (ip, filename, file_size) VALUES (?, ?, ?)',
-            (ip, filename, file_size)
+            (client_ip, filename, file_size)
         )
         # 不在上传时更新在线状态，改由心跳接口维护
         db.commit()
@@ -461,116 +474,151 @@ def upload_video(ip):
         print(f"数据库记录失败: {e}")
 
     print(f"[UPLOAD] {request.remote_addr} 上传 {filename} -> {folder}")
-    return jsonify({"filename": filename, "ip": ip})
+    return jsonify({"filename": filename, "ip": client_ip})
 
 
 # ---------------- 心跳/在线状态 API ----------------
-@app.route("/api/heartbeat/<ip>", methods=["GET"])
-def heartbeat(ip):
-    """心跳：更新 folders.updated_at 和 last_upload_at（更新 videos 表中该 IP 的最后一条记录）。
-    支持设备 IP 变更检测与自动迁移。
+@app.route("/api/heartbeat/<identifier>", methods=["GET"])
+def heartbeat(identifier):
+    """心跳：更新 folders.updated_at 和 last_upload_at
+    identifier: device_id (推荐) 或 ip
+    query param: ip (可选，当 identifier 为 device_id 时用于更新 IP)
     """
-    device_id = request.args.get("device_id")
-    # print(f"[HEARTBEAT] {ip} 心跳 (device_id={device_id})")
+    # 1. 确定 device_id 和 current_ip
+    reported_ip = request.args.get("ip")
+    device_id = None
+    current_ip = identifier
+
+    # 简单判断: 如果 identifier 不是 IP 格式，则认为是 device_id
+    if identifier.count('.') != 3:
+        device_id = identifier
+        current_ip = reported_ip or request.remote_addr
+    else:
+        # 旧客户端逻辑: identifier 是 IP
+        # 尝试从 query param 获取 device_id (旧版可能传也可能不传)
+        device_id = request.args.get("device_id")
+        current_ip = identifier
+    
     db = get_db()
     try:
-        # --- 1. 检测 IP 变更与数据迁移 ---
+        # --- 核心逻辑：确保 (device_id, current_ip) 的记录存在且是最新的 ---
+        
+        # 1. 如果有 device_id，先检查数据库是否已有该 device_id 的记录
         if device_id:
-            # 查找该设备之前绑定的其他 IP
-            old_recs = db.execute('SELECT ip, remark, upload_enabled FROM folders WHERE device_id = ? AND ip != ?', (device_id, ip)).fetchall()
+            existing_dev = db.execute('SELECT * FROM folders WHERE device_id = ?', (device_id,)).fetchone()
             
-            for old_rec in old_recs:
-                old_ip = old_rec['ip']
-                print(f"[MIGRATE] 设备 {device_id} IP 变更: {old_ip} -> {ip}")
-                
-                # 1.1 确保新 IP 记录存在
-                curr = db.execute('SELECT ip FROM folders WHERE ip = ?', (ip,)).fetchone()
-                if not curr:
-                    # 继承旧配置创建新记录
-                    print(f"[MIGRATE] 创建新记录 {ip}，继承备注: {old_rec['remark']}")
+            if existing_dev:
+                old_ip = existing_dev['ip']
+                if old_ip != current_ip:
+                    print(f"[MIGRATE] 设备 {device_id} IP 变更: {old_ip} -> {current_ip}")
+                    # IP 变更逻辑
+                    # 检查新 IP 是否已被占用 (可能是另一台机器，或者数据库脏数据)
+                    target_occupier = db.execute('SELECT * FROM folders WHERE ip = ?', (current_ip,)).fetchone()
+                    
+                    if target_occupier:
+                        # 目标 IP 已存在记录
+                        if target_occupier['device_id'] == device_id:
+                            # 应该不会发生(已由 existing_dev 覆盖)，除非数据重复
+                            pass 
+                        else:
+                            # 冲突：新 IP 被其他 device_id (或 null) 占用
+                            # 策略：强制覆盖，认为当前心跳是权威的
+                            print(f"[MIGRATE] 目标 IP {current_ip} 被占用，正在合并/覆盖...")
+                            # 将旧 IP 的视频转移到新 IP (如果需要)
+                            # 这里简化处理：只更新当前 device_id 记录的 IP
+                            pass
+
+                    # 执行 IP 更新
+                    # 1. 更新 folders 表
+                    try:
+                        db.execute('UPDATE folders SET ip = ?, updated_at = CURRENT_TIMESTAMP WHERE device_id = ?', (current_ip, device_id))
+                    except sqlite3.IntegrityError:
+                        # 如果 update 失败(如 ip 冲突)，先删掉冲突的记录(假设它是无效的旧记录)
+                        db.execute('DELETE FROM folders WHERE ip = ? AND device_id != ?', (current_ip, device_id))
+                        db.execute('UPDATE folders SET ip = ?, updated_at = CURRENT_TIMESTAMP WHERE device_id = ?', (current_ip, device_id))
+
+                    # 2. 迁移 videos 表 (把旧 IP 的视频归属到新 IP)
+                    db.execute('UPDATE videos SET ip = ? WHERE ip = ?', (current_ip, old_ip))
+                    
+                    # 3. 物理文件夹迁移 (可选，为了保持历史文件可见)
+                    try:
+                        old_path = folder_path(old_ip)
+                        new_path = folder_path(current_ip)
+                        if os.path.exists(old_path) and old_ip != current_ip:
+                            if not os.path.exists(new_path):
+                                os.rename(old_path, new_path)
+                                print(f"[MIGRATE] 文件夹重命名: {old_ip} -> {current_ip}")
+                            else:
+                                # 合并
+                                for item in os.listdir(old_path):
+                                    s = os.path.join(old_path, item)
+                                    d = os.path.join(new_path, item)
+                                    if not os.path.exists(d):
+                                        shutil.move(s, d)
+                                shutil.rmtree(old_path)
+                                print(f"[MIGRATE] 文件夹合并完成")
+                    except Exception as e:
+                        print(f"[MIGRATE] 文件迁移警告: {e}")
+
+                else:
+                    # IP 没变，只更新时间
+                    db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE device_id = ?', (device_id,))
+            
+            else:
+                # 数据库无此 device_id 记录
+                # 检查 current_ip 是否存在 (可能是旧设备升级后第一次上报 device_id)
+                ip_rec = db.execute('SELECT * FROM folders WHERE ip = ?', (current_ip,)).fetchone()
+                if ip_rec:
+                    # 补全 device_id
+                    print(f"[BIND] 将设备 {device_id} 绑定到现有 IP {current_ip}")
+                    db.execute('UPDATE folders SET device_id = ?, updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (device_id, current_ip))
+                else:
+                    # 全新设备
+                    print(f"[NEW] 新设备接入: {device_id} @ {current_ip}")
                     db.execute(
                         'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct, device_id) VALUES (?, ?, ?, ?, ?)',
-                        (ip, old_rec['remark'], old_rec['upload_enabled'], 0, device_id)
+                        (current_ip, "", 1, 0, device_id) # 默认 upload=1
                     )
-                else:
-                    # 更新新记录的绑定
-                    db.execute('UPDATE folders SET device_id = ? WHERE ip = ?', (device_id, ip))
-
-                # 1.2 迁移视频记录
-                db.execute('UPDATE videos SET ip = ? WHERE ip = ?', (ip, old_ip))
-                
-                # 1.3 迁移物理文件
-                try:
-                    old_path = os.path.join(UPLOAD_FOLDER, old_ip)
-                    new_path = os.path.join(UPLOAD_FOLDER, ip)
-                    if os.path.exists(old_path):
-                        if not os.path.exists(new_path):
-                            os.rename(old_path, new_path)
-                            print(f"[MIGRATE] 文件夹重命名成功")
-                        else:
-                            # 合并模式
-                            print(f"[MIGRATE] 目标文件夹已存在，开始合并文件...")
-                            for item in os.listdir(old_path):
-                                s = os.path.join(old_path, item)
-                                d = os.path.join(new_path, item)
-                                if not os.path.exists(d):
-                                    shutil.move(s, d)
-                            try:
-                                os.rmdir(old_path) # 尝试删除空文件夹
-                            except: pass
-                except Exception as e:
-                    print(f"[MIGRATE] 文件系统操作失败: {e}")
-
-                # 1.4 删除旧记录
-                db.execute('DELETE FROM folders WHERE ip = ?', (old_ip,))
-                print(f"[MIGRATE] 旧记录 {old_ip} 已删除")
-
-        # --- 2. 常规心跳更新 ---
-        # 再次确保记录存在（防止没有 device_id 的旧客户端或者是全新设备）
-        cursor = db.execute('SELECT * FROM folders WHERE ip = ?', (ip,))
-        row = cursor.fetchone()
         
-        if row is None:
-            # 新设备（无历史迁移）
-            db.execute(
-                'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct, device_id) VALUES (?, ?, ?, ?, ?)',
-                (ip, "", 0, 0, device_id)
-            )
         else:
-            # 确保 device_id 绑定正确
-            if device_id:
-                db.execute('UPDATE folders SET device_id = ? WHERE ip = ?', (device_id, ip))
-        
-        # 更新 folders.updated_at（用于在线状态判断）
-        db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (ip,))
-        
-        # 更新 last_upload_at：更新 videos 表中该 IP 的最后一条记录的 uploaded_at
+            # 没有 device_id (旧版客户端)，回退到纯 IP 逻辑
+            # 确保记录存在
+            cursor = db.execute('SELECT * FROM folders WHERE ip = ?', (current_ip,))
+            if not cursor.fetchone():
+                db.execute(
+                    'INSERT INTO folders (ip, remark, upload_enabled, webrtc_direct) VALUES (?, ?, ?, ?)',
+                    (current_ip, "", 1, 0)
+                )
+            db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE ip = ?', (current_ip,))
+
+        # 更新 last_upload_at (videos 表)
         last_video = db.execute(
             'SELECT id FROM videos WHERE ip = ? ORDER BY uploaded_at DESC LIMIT 1',
-            (ip,)
+            (current_ip,)
         ).fetchone()
         
         if last_video:
-            # 如果存在视频记录，更新最后一条的 uploaded_at（用于显示最后活动时间）
             db.execute(
                 'UPDATE videos SET uploaded_at = CURRENT_TIMESTAMP WHERE id = ?',
                 (last_video['id'],)
             )
         
         db.commit()
+        
+        # 返回当前状态
+        row = db.execute('SELECT updated_at, upload_enabled, webrtc_direct FROM folders WHERE ip = ?', (current_ip,)).fetchone()
+        return jsonify({
+            "msg": "ok",
+            "ip": current_ip,
+            "updated_at": row['updated_at'] if row else None,
+            "upload_enabled": bool(row['upload_enabled']) if row else True,
+            "webrtc_direct": bool(row['webrtc_direct']) if row else False,
+        })
+
     except Exception as e:
         print(f"数据库记录失败: {e}")
         db.rollback()
-    
-    # 返回当前状态
-    row = db.execute('SELECT updated_at, upload_enabled, webrtc_direct FROM folders WHERE ip = ?', (ip,)).fetchone()
-    return jsonify({
-        "msg": "ok",
-        "ip": ip,
-        "updated_at": row['updated_at'] if row else None,
-        "upload_enabled": bool(row['upload_enabled']) if row else True,
-        "webrtc_direct": bool(row['webrtc_direct']) if row else False,
-    })
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/folders/<ip>/upload_enabled", methods=["PATCH"])
@@ -595,6 +643,7 @@ def update_upload_enabled(ip):
 
 
 @app.route("/api/folders/<ip>/webrtc_direct", methods=["PATCH"])
+@login_required
 def update_webrtc_direct(ip):
     """更新推流直连状态（无需登录，用于控制客户端 RTMP 推流）"""
     data = request.json or {}
