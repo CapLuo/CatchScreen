@@ -114,9 +114,9 @@ const statusText = document.getElementById('statusText');
 const debugInfo = document.getElementById('debugInfo');
 
 const urlParams = new URLSearchParams(location.search);
-const ip = urlParams.get('ip') || '-';
-// Nginx hls_nested=on -> /tmp/hls/{IP}/index.m3u8
-const hlsUrl = `/hls/${ip}/index.m3u8`;
+const streamId = urlParams.get('device_id') || urlParams.get('ip') || '-';
+// Nginx hls_nested=on -> /tmp/hls/{streamId}/index.m3u8
+const hlsUrl = `/hls/${streamId}/index.m3u8`;
 
 debugInfo.textContent = `Target: ${hlsUrl}`;
 
@@ -318,34 +318,32 @@ window.addEventListener('beforeunload', () => {
 </html>"""
 
 
-def check_hls_exists(ip: str) -> bool:
+def check_hls_exists(stream_id: str) -> bool:
     """
-    检查指定 IP 的 HLS 文件是否存在
+    检查指定 Stream ID (device_id) 的 HLS 文件是否存在
     """
-    safe_ip = ip.replace("/", "_")
-    # Nginx nested structure: /tmp/hls/{safe_ip}/index.m3u8
-    hls_path = os.path.join(HLS_ROOT, safe_ip, "index.m3u8")
+    safe_id = stream_id.replace("/", "_")
+    # Nginx nested structure: /tmp/hls/{safe_id}/index.m3u8
+    hls_path = os.path.join(HLS_ROOT, safe_id, "index.m3u8")
     return os.path.exists(hls_path)
 
 
-def get_hls_url(ip: str) -> Optional[str]:
+def get_hls_url(stream_id: str) -> Optional[str]:
     """
-    获取指定 IP 的 HLS 播放地址
+    获取指定 Stream ID 的 HLS 播放地址
     """
-    if check_hls_exists(ip):
-        safe_ip = ip.replace("/", "_")
-        return f"/hls/{safe_ip}/index.m3u8"
+    if check_hls_exists(stream_id):
+        safe_id = stream_id.replace("/", "_")
+        return f"/hls/{safe_id}/index.m3u8"
     return None
 
 
 async def handle_preview(request: Request) -> Response:
     """
     处理预览请求
-    GET /preview?ip=xxx
+    GET /preview?device_id=xxx (兼容 ip=xxx)
     返回 HLS 播放页面
     """
-    ip = request.query.get("ip", "-")
-    
     # 总是返回播放页面，页面内会轮询检测 HLS 流
     return web.Response(text=HLS_PREVIEW_HTML, content_type="text/html")
 
@@ -353,13 +351,13 @@ async def handle_preview(request: Request) -> Response:
 async def handle_hls_file(request: Request) -> Response:
     """
     提供 HLS 文件访问 (Nested structure)
-    GET /hls/{ip}/{filename}
+    GET /hls/{stream_id}/{filename}
     """
-    ip = request.match_info.get("ip", "")
+    stream_id = request.match_info.get("stream_id", "")
     filename = request.match_info.get("filename", "index.m3u8")
     
-    safe_ip = ip.replace("/", "_")
-    file_path = os.path.join(HLS_ROOT, safe_ip, filename)
+    safe_id = stream_id.replace("/", "_")
+    file_path = os.path.join(HLS_ROOT, safe_id, filename)
     
     if not os.path.exists(file_path):
         return web.Response(status=404, text="File not found")
@@ -418,7 +416,7 @@ def create_app() -> web.Application:
     app.router.add_get('/preview', handle_preview)
     app.router.add_get('/status', handle_status)
     # 修改路由以匹配嵌套结构
-    app.router.add_get('/hls/{ip}/{filename:.*}', handle_hls_file)
+    app.router.add_get('/hls/{stream_id}/{filename:.*}', handle_hls_file)
     
     # CORS 支持
     @web.middleware

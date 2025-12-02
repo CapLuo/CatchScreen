@@ -33,6 +33,7 @@ desktop.ini
 
 # 日志文件
 *.log
+logs/
 
 #虚拟机
 myenv/

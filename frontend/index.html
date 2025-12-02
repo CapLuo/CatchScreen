@@ -153,13 +153,15 @@
     }
 
     // 打开实时预览
-    function openPreview(ip) {
+    function openPreview(ip, deviceId) {
       currentPreviewIp = ip;
       // 开启直连推流
       updateWebrtcDirect(ip, true);
       
       const frame = document.getElementById('previewFrame');
-      frame.src = `${WEBRTC_BASE}/preview?ip=${encodeURIComponent(ip)}`;
+      // 优先使用 deviceId，如果没有则回退到 ip
+      const targetId = deviceId || ip;
+      frame.src = `${WEBRTC_BASE}/preview?device_id=${encodeURIComponent(targetId)}`;
       previewModal.show();
     }
 
@@ -315,7 +317,7 @@
 
         html += list.map(folder => `
         <div class="col-12 col-sm-6 col-lg-4 col-xl-3">
-          <div class="folder-card card shadow-sm h-100" onclick="openPreview('${folder.ip}')" style="cursor: pointer;">
+          <div class="folder-card card shadow-sm h-100" onclick="openPreview('${folder.ip}', '${folder.device_id || ''}')" style="cursor: pointer;">
             <div class="card-body py-3 d-flex flex-column">
               <div class="d-flex align-items-start justify-content-between mb-2">
                 <div class="text-end w-100">

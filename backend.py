@@ -241,15 +241,16 @@ def list_folders():
         # 使用 LIKE 进行模糊搜索，支持 IP 和备注
         search_pattern = f"%{search_query}%"
         rows = db.execute(
-            'SELECT ip, remark, updated_at, upload_enabled, webrtc_direct FROM folders WHERE ip LIKE ? OR remark LIKE ? ORDER BY ip',
+            'SELECT ip, device_id, remark, updated_at, upload_enabled, webrtc_direct FROM folders WHERE ip LIKE ? OR remark LIKE ? ORDER BY ip',
             (search_pattern, search_pattern)
         ).fetchall()
     else:
-        rows = db.execute('SELECT ip, remark, updated_at, upload_enabled, webrtc_direct FROM folders ORDER BY ip').fetchall()
+        rows = db.execute('SELECT ip, device_id, remark, updated_at, upload_enabled, webrtc_direct FROM folders ORDER BY ip').fetchall()
 
     # 2) 逐条补充视频与在线信息
     for row in rows:
         ip = row['ip']
+        device_id = row['device_id']
         remark = row['remark'] or ""
         updated_at = row['updated_at']
         upload_enabled = int(row['upload_enabled']) if row['upload_enabled'] is not None else 1
@@ -286,6 +287,7 @@ def list_folders():
 
         folders.append({
             "ip": ip,
+            "device_id": device_id,
             "video_count": video_count,
             "remark": remark,
             "last_upload_at": last_upload_at,
@@ -314,9 +316,10 @@ def get_folder_detail(ip):
     
     # 从数据库获取备注、配置、最近上传与在线状态
     db = get_db()
-    cursor = db.execute('SELECT remark, upload_enabled, webrtc_direct FROM folders WHERE ip = ?', (ip,))
+    cursor = db.execute('SELECT device_id, remark, upload_enabled, webrtc_direct FROM folders WHERE ip = ?', (ip,))
     row = cursor.fetchone()
     remark = row['remark'] if row else ""
+    device_id = row['device_id'] if row else None
     upload_enabled = int(row['upload_enabled']) if row and row['upload_enabled'] is not None else 1
     webrtc_direct = int(row['webrtc_direct']) if row and row['webrtc_direct'] is not None else 0
 
@@ -339,6 +342,7 @@ def get_folder_detail(ip):
     
     return jsonify({
         "ip": ip,
+        "device_id": device_id,
         "remark": remark,
         "videos": videos,
         "last_upload_at": last_upload_at,

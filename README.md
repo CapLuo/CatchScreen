@@ -105,7 +105,7 @@ python pc_video_track.py --file_server http://127.0.0.1:5001 --mode hls --hls_di
 ### 视频管理
 
 - `GET /uploads/<ip>/<filename>` - 获取视频文件
-- `POST /api/upload/<ip>` - 上传视频
+- `POST <ip>` - 上传视频
 
 ## 🎯 主要功能
 
