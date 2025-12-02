@@ -178,8 +178,8 @@
     }
 
     // 加载文件夹列表
-    async function loadFolders() {
-      setLoading(true);
+    async function loadFolders(isBackground = false) {
+      if (!isBackground) setLoading(true);
       try {
         const response = await fetch(`${API_BASE}/folders`, { credentials: 'include' });
         const result = await response.json();
@@ -189,16 +189,20 @@
         applyFilters();
         
       } catch (error) {
-        document.getElementById('foldersList').innerHTML = `
-          <div class="col-12">
-            <div class="alert alert-danger d-flex align-items-center" role="alert">
-              <i class="bi bi-exclamation-triangle me-2"></i>
-              <div>加载失败：${error.message}</div>
-            </div>
-          </div>`;
-        showError('加载失败');
+        if (!isBackground) {
+          document.getElementById('foldersList').innerHTML = `
+            <div class="col-12">
+              <div class="alert alert-danger d-flex align-items-center" role="alert">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                <div>加载失败：${error.message}</div>
+              </div>
+            </div>`;
+          showError('加载失败');
+        } else {
+          console.warn('Background refresh failed:', error);
+        }
       } finally {
-        setLoading(false);
+        if (!isBackground) setLoading(false);
       }
     }
 
@@ -528,6 +532,9 @@
     // 页面加载
     checkAuth();
     loadFolders();
+    
+    // 自动刷新 (每30秒)，以配合心跳更新在线状态
+    setInterval(() => loadFolders(true), 60000);
   </script>
 </body>
 </html>
