@@ -44,8 +44,8 @@ FFMPEG_RELATIVE_DIR = "ffmpeg/bin"  # PyInstaller 打包时放置 ffmpeg/* 到�
 
 # 全局配置状态 (由心跳线程更新)
 CLIENT_CONFIG = {
-    "upload_enabled": False,
-    "webrtc_direct": False
+    "upload_enabled": False,  # 默认关闭上传，等待服务器心跳开启
+    "webrtc_direct": False    # 默认关闭直连推流
 }
 
 # -----------------------
