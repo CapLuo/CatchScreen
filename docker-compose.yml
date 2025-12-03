@@ -11,6 +11,7 @@ services:
       - PYTHONUNBUFFERED=1
       - HLS_ROOT=/app/hls  # 告诉 webrtc_server 从哪里读取 HLS
     volumes:
+      - .:/app                 # <--- 新增：挂载当前目录代码到容器，方便开发调试
       - ./uploads:/app/uploads
       - ./data:/app/data        # 挂载数据目录（存放 database.db）
       - ./frontend:/app/frontend
