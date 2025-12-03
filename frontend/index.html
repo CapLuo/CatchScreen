@@ -161,7 +161,8 @@
       const frame = document.getElementById('previewFrame');
       // 优先使用 deviceId，如果没有则回退到 ip
       const targetId = deviceId || ip;
-      frame.src = `${WEBRTC_BASE}/preview?device_id=${encodeURIComponent(targetId)}`;
+      // 使用 ip 参数名以兼容旧版预览服务器，但值传递 targetId (device_id)
+      frame.src = `${WEBRTC_BASE}/preview?ip=${encodeURIComponent(targetId)}`;
       previewModal.show();
     }
 
