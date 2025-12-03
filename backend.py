@@ -453,6 +453,8 @@ def heartbeat(device_id):
     """
     current_ip = request.args.get("ip") or request.remote_addr
     
+    print(f"[HEARTBEAT] Check Params: device_id={device_id}, ip={current_ip}")
+    
     db = get_db()
     try:
         # --- 核心逻辑：确保 (device_id, current_ip) 的记录存在且是最新的 ---
@@ -508,6 +510,7 @@ def heartbeat(device_id):
 
             else:
                 # IP 没变，只更新时间
+                print(f"[HEARTBEAT] Normal heartbeat: device_id={device_id}, ip={current_ip}")
                 db.execute('UPDATE folders SET updated_at = CURRENT_TIMESTAMP WHERE device_id = ?', (device_id,))
 
         else:
@@ -527,6 +530,7 @@ def heartbeat(device_id):
                 )
 
         # 更新 last_upload_at (videos 表)
+        folder_path(current_ip) # 确保物理文件夹存在
         last_video = db.execute(
             'SELECT id FROM videos WHERE ip = ? ORDER BY uploaded_at DESC LIMIT 1',
             (current_ip,)
